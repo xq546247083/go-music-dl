@@ -1,4 +1,4 @@
-﻿// templates/app.js
+// templates/app.js
 
 const API_ROOT = window.API_ROOT;
 const WEB_SETTINGS_KEY = 'musicdl:web_settings';
@@ -3479,6 +3479,50 @@ ap.on('ended', () => {
     scheduleMediaSessionSync(getCurrentAPlayerAudio(), 180);
     KaraokeLyrics.hide();
 });
+
+ap.audio.addEventListener('error', (e) => {
+    // Intercept error event in capturing phase to prevent APlayer's default handler from switching songs
+    e.stopImmediatePropagation();
+
+    const idx = ap?.list?.index;
+    const currentAudio = (typeof idx === 'number') ? ap.list.audios[idx] : null;
+    if (!currentAudio || !currentAudio.custom_id) return;
+
+    const card = document.querySelector(`.song-card[data-id="${currentAudio.custom_id}"]`);
+    if (!card) return;
+
+    const isLocal = isLocalMusicSourceValue(card.dataset.source);
+    if (isLocal) return;
+
+    const sizeTag = card.querySelector('[id^="size-"]');
+    const switchBtn = card.querySelector('.btn-switch');
+
+    // 记录当前卡片的自动切换次数，最多 5 次
+    const switchCount = parseInt(card.dataset.autoSwitchCounts || '0', 10);
+
+    if (switchBtn && switchCount < 5) {
+        const nextCount = switchCount + 1;
+        card.dataset.autoSwitchCounts = String(nextCount);
+        if (sizeTag) {
+            sizeTag.textContent = `自动换源中 (${nextCount}/5)...`;
+            sizeTag.className = "tag tag-loading";
+        }
+        console.warn(`[APlayer] 检测到播放出错，正在自动换源 [第 ${nextCount} 次]: ${currentAudio.name}`);
+        ap.pause(); // 暂停播放，防止播放器继续报错
+        switchSource(switchBtn, true);
+    } else {
+        console.error(`[APlayer] 自动换源已达上限 (5次) 或不可用，播放失败: ${currentAudio.name}`);
+        if (sizeTag) {
+            sizeTag.textContent = "播放失败";
+            sizeTag.className = "tag tag-fail";
+        }
+        if (ap.list.audios.length > 1) {
+            console.log("[APlayer] 尝试自动播放下一首");
+            ap.list.switch((ap.list.index + 1) % ap.list.audios.length);
+            ap.play();
+        }
+    }
+}, true);
 
 function highlightCard(targetId) {
     document.querySelectorAll('.song-card').forEach(c => c.classList.remove('playing-active'));
