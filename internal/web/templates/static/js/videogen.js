@@ -10,12 +10,12 @@
             if (n <= 1) return data;
             const half = n / 2, even = new Float32Array(half), odd = new Float32Array(half);
             for (let i = 0; i < half; i++) { even[i] = data[2 * i]; odd[i] = data[2 * i + 1]; }
-            const q = this.fft(even), r = this.fft(odd), output = new Float32Array(n); 
+            const q = this.fft(even), r = this.fft(odd), output = new Float32Array(n);
             for (let k = 0; k < half; k++) { const t = r[k]; output[k] = q[k] + t; output[k + half] = q[k] - t; }
             return output;
-            ctx.lineJoin = "round";
-            // 加粗描边，实现图1的厚实感
-            ctx.lineWidth = Math.max(3, lineHeight * 0.12);
+        },
+        getFrequencyData: function(pcmData, fftSize, smoothing) {
+            const half = fftSize / 2;
             if (!this.windowed || this.windowed.length !== fftSize) {
                 this.windowed = new Float32Array(fftSize);
                 this.mags = new Uint8Array(half);
@@ -23,17 +23,17 @@
             }
             for(let i=0; i<fftSize; i++) {
                 const val = (i < pcmData.length) ? pcmData[i] : 0;
-                this.windowed[i] = val * (0.5 * (1 - Math.cos(2 * Math.PI * i / (fftSize - 1)))); 
+                this.windowed[i] = val * (0.5 * (1 - Math.cos(2 * Math.PI * i / (fftSize - 1))));
             }
             const rawFFT = this.fft(this.windowed);
             for(let i=0; i<half; i++) {
                 let mag = Math.abs(rawFFT[i]) / fftSize;
-                mag = mag * 2.0; 
+                mag = mag * 2.0;
                 mag = smoothing * this.previousMags[i] + (1 - smoothing) * mag;
                 this.previousMags[i] = mag;
                 let db = 20 * Math.log10(mag + 1e-6);
                 const minDb = -100, maxDb = -10;
-                let val = (db - minDb) * (255 / (maxDb - minDb)); 
+                let val = (db - minDb) * (255 / (maxDb - minDb));
                 if(val < 0) val = 0; if(val > 255) val = 255;
                 this.mags[i] = val;
             }
@@ -211,40 +211,40 @@
 
             try {
                 let initRes;
-                // 新增：如果前端传来了自定义的音乐 Blob 文件，走 FormData 上传逻辑
+                let audioBuffer;
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
                 if (data.customAudioFile) {
                     setStatus("正在初始化...", "正在向服务器投递您的本地音乐...", 5);
                     const fd = new FormData();
                     fd.append("id", data.id);
                     fd.append("source", data.source);
                     fd.append("audio_file", data.customAudioFile);
-                    
+
                     initRes = await fetch(`${apiRoot}/videogen/init`, {
                         method: "POST",
                         body: fd
                     }).then(r => r.json());
-                } else {
-                    // 原版逻辑：仅传 ID 让服务器自己下
-                    setStatus("正在初始化...", "请求云端处理通道", 5);
-                    initRes = await fetch(`${apiRoot}/videogen/init`, {
-                        method: "POST", headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: data.id, source: data.source }),
-                    }).then((r) => r.json());
-                }
-                
-                if (initRes.error) throw new Error(initRes.error);
-                
-                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                let audioBuffer;
+                    if (initRes.error) throw new Error(initRes.error);
 
-                if (data.customAudioFile) {
                     setStatus("解码音频...", "解析本地高清音频数据...", 15);
                     const arr = await data.customAudioFile.arrayBuffer();
                     audioBuffer = await audioCtx.decodeAudioData(arr);
                 } else {
-                    setStatus("下载与解码音频...", "可能需要一些时间，请耐心等待", 15);
-                    const arr = await fetch(initRes.audio_url).then((r) => r.arrayBuffer());
-                    audioBuffer = await audioCtx.decodeAudioData(arr);
+                    setStatus("正在初始化...", "下载音频与初始化并行中...", 5);
+                    const audioDownloadUrl = `${apiRoot}/download?id=${encodeURIComponent(data.id)}&source=${encodeURIComponent(data.source)}`;
+                    const [initResult, audioArr] = await Promise.all([
+                        fetch(`${apiRoot}/videogen/init`, {
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ id: data.id, source: data.source }),
+                        }).then(r => r.json()),
+                        fetch(audioDownloadUrl).then(r => r.arrayBuffer())
+                    ]);
+                    initRes = initResult;
+                    if (initRes.error) throw new Error(initRes.error);
+
+                    setStatus("解码音频...", "解析音频数据...", 15);
+                    audioBuffer = await audioCtx.decodeAudioData(audioArr);
                 }
                     
                 setStatus("加载视觉资源...", "准备 1080P 超清渲染画板", 25);
@@ -289,11 +289,44 @@
                 FFT.reset();
                 setStatus("超清渲染中", "0%", 30);
                 
+                const canvasToJpegBlob = (targetCanvas, quality) => new Promise((resolve, reject) => {
+                    if (targetCanvas.toBlob) {
+                        targetCanvas.toBlob((blob) => {
+                            if (blob) resolve(blob);
+                            else reject(new Error("Frame encode failed"));
+                        }, "image/jpeg", quality);
+                        return;
+                    }
+
+                    try {
+                        const dataUrl = targetCanvas.toDataURL("image/jpeg", quality);
+                        const payload = dataUrl.split(",")[1] || "";
+                        const binary = atob(payload);
+                        const bytes = new Uint8Array(binary.length);
+                        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                        resolve(new Blob([bytes], { type: "image/jpeg" }));
+                    } catch (err) {
+                        reject(err);
+                    }
+                });
+
                 const uploadBatch = async (frames, startIdx) => {
-                    await fetch(`${apiRoot}/videogen/frame`, {
-                        method: "POST", headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ session_id: initRes.session_id, frames: frames, start_idx: startIdx })
+                    const form = new FormData();
+                    form.append("session_id", initRes.session_id);
+                    form.append("start_idx", String(startIdx));
+                    frames.forEach((blob, index) => {
+                        const frameNum = String(startIdx + index).padStart(5, "0");
+                        form.append("frames", blob, `frame_${frameNum}.jpg`);
                     });
+
+                    const res = await fetch(`${apiRoot}/videogen/frame`, {
+                        method: "POST",
+                        body: form
+                    });
+                    const body = await res.json().catch(() => ({}));
+                    if (!res.ok || body.error) {
+                        throw new Error(body.error || `Frame upload failed: ${res.status}`);
+                    }
                 };
                 
                 const seekVideo = async (time) => {
@@ -320,6 +353,20 @@
                     return startY + (lines.length * lineHeight);
                 };
 
+                const karaokeTextColor = "#ffffff";
+                const karaokeAccentColor = "#12bd85";
+                const karaokeStrokeText = (text, x, y, lineHeight, fillColor, strokeColor, alpha) => {
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.lineJoin = "round";
+                    ctx.lineWidth = Math.max(2, lineHeight * 0.08);
+                    ctx.strokeStyle = strokeColor;
+                    ctx.fillStyle = fillColor;
+                    ctx.strokeText(text, x, y);
+                    ctx.fillText(text, x, y);
+                    ctx.restore();
+                };
+
                 const drawKaraokeWordLine = (words, x, y, lineHeight, nowMs, baseColor, fillColor, alpha) => {
                     ctx.lineJoin = "round"; // 确保边缘绝对圆润无尖刺
                     ctx.lineWidth = Math.max(3, lineHeight * 0.12); // 稍微加粗，还原图1厚实感
@@ -329,7 +376,7 @@
                     let cursorX = x;
                     
                     // 第1层：先画一整句的【底层绿边】
-                    ctx.strokeStyle = "#10b981";
+                    ctx.strokeStyle = karaokeAccentColor;
                     words.forEach((word) => {
                         const text = String(word?.text || '');
                         if (text) { ctx.strokeText(text, cursorX, y); cursorX += ctx.measureText(text).width; }
@@ -337,7 +384,7 @@
 
                     // 第2层：再画一整句的【底层白字】（字压在边上，内部绝对纯净无色块）
                     cursorX = x;
-                    ctx.fillStyle = "#ffffff";
+                    ctx.fillStyle = baseColor;
                     words.forEach((word) => {
                         const text = String(word?.text || '');
                         if (text) { ctx.fillText(text, cursorX, y); cursorX += ctx.measureText(text).width; }
@@ -364,7 +411,7 @@
 
                     // 第3层：在进度裁剪区内画【高亮白边】
                     cursorX = x;
-                    ctx.strokeStyle = "#ffffff";
+                    ctx.strokeStyle = karaokeTextColor;
                     words.forEach((word) => {
                         const text = String(word?.text || '');
                         if (text) { ctx.strokeText(text, cursorX, y); cursorX += ctx.measureText(text).width; }
@@ -372,7 +419,7 @@
 
                     // 第4层：在进度裁剪区内画【高亮绿字】
                     cursorX = x;
-                    ctx.fillStyle = "#10b981";
+                    ctx.fillStyle = fillColor;
                     words.forEach((word) => {
                         const text = String(word?.text || '');
                         if (text) { ctx.fillText(text, cursorX, y); cursorX += ctx.measureText(text).width; }
@@ -450,7 +497,7 @@
                 };
 
                 const drawKaraokeLyrics = (timeMs, lx, baseLy, maxWidth) => {
-                    const karaokeFillColor = "#10b981";
+                    const karaokeFillColor = karaokeAccentColor;
                     const createLineLayout = (line, font, lineHeight, useWordProgress) => {
                         if (!line?.text) {
                             return { useWordProgress: false, wordLines: [], textLines: [], lineHeight, height: 0 };
@@ -487,10 +534,7 @@
                         } else {
                             layout.textLines.forEach((lineText, lineIndex) => {
                                 const y = startY + (lineIndex * layout.lineHeight) + layout.lineHeight / 2;
-                                ctx.fillStyle = baseColor;
-                                ctx.globalAlpha = alpha;
-                                ctx.fillText(lineText, x, y);
-                                ctx.globalAlpha = 1;
+                                karaokeStrokeText(lineText, x, y, layout.lineHeight, baseColor, karaokeAccentColor, alpha);
                             });
                         }
                         return startY + layout.height;
@@ -504,7 +548,7 @@
 
                     const blocks = [];
                     let currentBlockIndex = -1;
-                    for (let offset = -1; offset <= 1; offset++) {
+                    for (let offset = -2; offset <= 2; offset++) {
                         const idx = activeIdx + offset;
                         if (idx < 0 || idx >= lyricGroups.length) continue;
 
@@ -513,7 +557,7 @@
                         if (!orig) continue;
 
                         const isCurrent = offset === 0;
-                        const blockAlpha = isCurrent ? 1 : 0.4;
+                        const blockAlpha = isCurrent ? 1 : 0.72;
                         const origFont = isCurrent ? "bold 40px sans-serif" : "700 28px sans-serif";
                         const origLineHeight = isCurrent ? 52 : 38;
                         const subGap = isCurrent ? 10 : 8;
@@ -560,9 +604,9 @@
 
                     blocks.forEach((block) => {
                         ctx.shadowColor = "rgba(0,0,0,0.9)";
-                        ctx.shadowBlur = block.isCurrent ? 8 : 4;
-                        ctx.shadowOffsetX = block.isCurrent ? 2 : 1;
-                        ctx.shadowOffsetY = block.isCurrent ? 2 : 1;
+                        ctx.shadowBlur = block.isCurrent ? 8 : 6;
+                        ctx.shadowOffsetX = 2;
+                        ctx.shadowOffsetY = 2;
 
                         let currentY = block.topY;
 
@@ -572,7 +616,7 @@
                             currentY,
                             block.origFont,
                             timeMs,
-                            block.isCurrent ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.7)",
+                            karaokeTextColor,
                             block.alpha,
                             block.isCurrent
                         );
@@ -585,7 +629,7 @@
                                 currentY,
                                 block.romaFont,
                                 timeMs,
-                                block.isCurrent ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.5)",
+                                karaokeTextColor,
                                 block.alpha,
                                 block.isCurrent
                             );
@@ -599,7 +643,7 @@
                                 currentY,
                                 block.transFont,
                                 timeMs,
-                                block.isCurrent ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.6)",
+                                karaokeTextColor,
                                 block.alpha,
                                 block.isCurrent
                             );
@@ -614,7 +658,7 @@
                     const fftSize = 2048; 
                     const startSample = Math.max(0, Math.floor((frameIdx * samplesPerFrame) - (fftSize / 4))); 
                     
-                    let pcmSlice = rawData.slice(startSample, startSample + fftSize);
+                    let pcmSlice = rawData.subarray(startSample, startSample + fftSize);
                     if (pcmSlice.length < fftSize) {
                         const padded = new Float32Array(fftSize);
                         padded.set(pcmSlice); pcmSlice = padded;
@@ -672,24 +716,34 @@
                     
                     ctx.restore(); 
                     
-                    previewCtx.clearRect(0,0,width,height);
-                    previewCtx.drawImage(canvas, 0, 0);
+                    if (frameIdx % 10 === 0 || frameIdx === totalFrames - 1) {
+                        previewCtx.clearRect(0,0,width,height);
+                        previewCtx.drawImage(canvas, 0, 0);
+                    }
                 };
                 
                 let frameIdx = 0;
+                let uploadPromise = Promise.resolve();
+                const renderStartTime = performance.now();
                 while (frameIdx < totalFrames) {
                   let framesBuffer = [];
                   const batchStartIdx = frameIdx;
                   for (let i = 0; i < batchSize && frameIdx < totalFrames; i++) {
                     await drawFrame(frameIdx);
-                    framesBuffer.push(canvas.toDataURL("image/jpeg", 0.95));
+                    framesBuffer.push(await canvasToJpegBlob(canvas, 0.92));
                     frameIdx++;
                   }
-                  await uploadBatch(framesBuffer, batchStartIdx);
+                  await uploadPromise;
+                  uploadPromise = uploadBatch(framesBuffer, batchStartIdx);
                   const pct = Math.round((frameIdx / totalFrames) * 100);
-                  setStatus("超清帧渲染中...", `已完成 ${pct}%  (${frameIdx}/${totalFrames} 帧)`, 30 + pct * 0.65);
-                  await new Promise(r => setTimeout(r, 0));
+                  const elapsed = (performance.now() - renderStartTime) / 1000;
+                  const eta = frameIdx > 0 ? Math.round(elapsed / frameIdx * (totalFrames - frameIdx)) : 0;
+                  const etaMin = Math.floor(eta / 60);
+                  const etaSec = eta % 60;
+                  const etaStr = etaMin > 0 ? `${etaMin}分${etaSec}秒` : `${etaSec}秒`;
+                  setStatus("超清帧渲染中...", `已完成 ${pct}%  (${frameIdx}/${totalFrames} 帧)  预计剩余 ${etaStr}`, 30 + pct * 0.65);
                 }
+                await uploadPromise;
                 
                 setStatus("正在合成最终视频...", "合并无损音频与画面帧", 98);
                 const finalRes = await fetch(`${apiRoot}/videogen/finish`, {

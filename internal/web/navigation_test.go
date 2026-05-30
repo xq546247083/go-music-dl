@@ -246,6 +246,7 @@ func TestSettingsModalIncludesDownloadDirPresets(t *testing.T) {
 		`id="setting-download-dir-preset"`,
 		`id="setting-download-filename-template"`,
 		`id="setting-floating-lyrics"`,
+		`id="setting-auto-switch-invalid-sources"`,
 		`onclick="openAboutAppModal()"`,
 		`关于 go-music-dl`,
 		`class="cookie-item setting-item setting-link-row"`,
@@ -388,6 +389,25 @@ func TestSearchSourceSelectorSupportsMobileCollapse(t *testing.T) {
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("app.js missing collapse helper %q", want)
+		}
+	}
+}
+
+func TestAppToastFitsMobileViewport(t *testing.T) {
+	cssContent, err := templateFS.ReadFile("templates/static/css/style.css")
+	if err != nil {
+		t.Fatalf("ReadFile(style.css): %v", err)
+	}
+
+	css := string(cssContent)
+	for _, want := range []string{
+		`.app-toast-container {`,
+		`right: 18px;`,
+		`width: min(360px, calc(100vw - 36px));`,
+		`box-sizing: border-box;`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("style.css missing mobile-safe toast rule %q", want)
 		}
 	}
 }

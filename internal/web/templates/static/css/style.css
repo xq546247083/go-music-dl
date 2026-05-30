@@ -796,6 +796,7 @@ body.batch-mode .song-card { padding-left: 10px; }
 .app-toast {
     position: relative;
     width: min(360px, calc(100vw - 36px));
+    box-sizing: border-box;
     padding: 12px 38px 12px 14px;
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.98);
