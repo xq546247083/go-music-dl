@@ -289,6 +289,37 @@ func TestSettingsModalIncludesDownloadDirPresets(t *testing.T) {
 	}
 }
 
+func TestDefaultPageSizePrompts(t *testing.T) {
+	jsContent, err := templateFS.ReadFile("templates/static/js/app.js")
+	if err != nil {
+		t.Fatalf("ReadFile(app.js): %v", err)
+	}
+	for _, want := range []string{
+		`const DEFAULT_WEB_PAGE_SIZE = 30;`,
+		`const DEFAULT_CLI_PAGE_SIZE = 20;`,
+	} {
+		if !strings.Contains(string(jsContent), want) {
+			t.Fatalf("app.js missing default page size token %q", want)
+		}
+	}
+
+	modalContent, err := templateFS.ReadFile("templates/partials/modals.html")
+	if err != nil {
+		t.Fatalf("ReadFile(modals.html): %v", err)
+	}
+	html := string(modalContent)
+	for _, want := range []string{
+		`id="setting-web-page-size" min="1" max="200" step="1" placeholder="默认 30"`,
+		`用于网页分页显示，默认 30。`,
+		`id="setting-cli-page-size" min="1" max="200" step="1" placeholder="默认 20"`,
+		`用于 TUI 分页显示，默认 20。`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("modals.html missing page size prompt %q", want)
+		}
+	}
+}
+
 func TestAppUpdateModalIsAboutOnly(t *testing.T) {
 	content, err := templateFS.ReadFile("templates/partials/modals.html")
 	if err != nil {
@@ -337,7 +368,7 @@ func TestAppUpdateModalIsAboutOnly(t *testing.T) {
 	}
 }
 
-func TestSearchSourceSelectorSupportsMobileCollapse(t *testing.T) {
+func TestSearchSourceSelectorSupportsDesktopAndMobileCollapse(t *testing.T) {
 	htmlContent, err := templateFS.ReadFile("templates/partials/search_box.html")
 	if err != nil {
 		t.Fatalf("ReadFile(search_box.html): %v", err)
@@ -365,8 +396,8 @@ func TestSearchSourceSelectorSupportsMobileCollapse(t *testing.T) {
 	for _, want := range []string{
 		`.source-selector.is-collapsed .source-grid { display: none; }`,
 		`.source-selector.is-collapsed .source-collapse-icon { transform: rotate(180deg); }`,
-		`@media (max-width: 720px)`,
-		`.source-collapse-icon { display: inline-block; }`,
+		`.source-collapse-btn { background: none; border: none; padding: 0; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;`,
+		`display: inline-block;`,
 	} {
 		if !strings.Contains(css, want) {
 			t.Fatalf("style.css missing collapse rule %q", want)
@@ -389,6 +420,16 @@ func TestSearchSourceSelectorSupportsMobileCollapse(t *testing.T) {
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("app.js missing collapse helper %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`if (!isMobileSourceSelectorViewport()) return;`,
+		`if (!isMobile) {
+        collapsed = false;
+    }`,
+	} {
+		if strings.Contains(js, unwanted) {
+			t.Fatalf("app.js still limits source selector collapse to mobile: %q", unwanted)
 		}
 	}
 }

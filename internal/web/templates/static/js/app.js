@@ -4,7 +4,7 @@ const API_ROOT = window.API_ROOT;
 const WEB_SETTINGS_KEY = 'musicdl:web_settings';
 const INSPECT_REQUEST_DELAY_MS = 100;
 const AUTO_SWITCH_INVALID_DELAY_MS = 500;
-const DEFAULT_WEB_PAGE_SIZE = 50;
+const DEFAULT_WEB_PAGE_SIZE = 30;
 const DEFAULT_CLI_PAGE_SIZE = 20;
 const LOCAL_MUSIC_SOURCE = 'local';
 const LEGACY_LOCAL_MUSIC_SOURCE = 'local-file';
@@ -731,7 +731,6 @@ function applySourceSelectorCollapsed(selector, collapsed) {
 function toggleSourceSelector(force) {
     const selector = document.getElementById('source-selector');
     if (!selector) return;
-    if (!isMobileSourceSelectorViewport()) return;
     const collapsed = typeof force === 'boolean'
         ? force
         : !selector.classList.contains('is-collapsed');
@@ -760,9 +759,6 @@ function initSourceSelectorCollapse(root = document) {
     }
     if (typeof collapsed !== 'boolean') {
         collapsed = isMobile;
-    }
-    if (!isMobile) {
-        collapsed = false;
     }
     applySourceSelectorCollapsed(selector, collapsed);
 }

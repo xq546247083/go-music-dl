@@ -83,8 +83,8 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	t.Cleanup(resetConfigStateForTest)
 
 	defaults := GetWebSettings()
-	if defaults.EmbedDownload {
-		t.Fatalf("default EmbedDownload should be false")
+	if !defaults.EmbedDownload {
+		t.Fatalf("default EmbedDownload should be true")
 	}
 	if defaults.DownloadToLocal {
 		t.Fatalf("default DownloadToLocal should be false")
@@ -101,8 +101,14 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	if defaults.WebPageSize != DefaultWebPageSize {
 		t.Fatalf("default WebPageSize mismatch: got %d want %d", defaults.WebPageSize, DefaultWebPageSize)
 	}
+	if defaults.WebPageSize != 30 {
+		t.Fatalf("default WebPageSize should be 30: got %d", defaults.WebPageSize)
+	}
 	if defaults.CliPageSize != DefaultCLIPageSize {
 		t.Fatalf("default CliPageSize mismatch: got %d want %d", defaults.CliPageSize, DefaultCLIPageSize)
+	}
+	if defaults.CliPageSize != 20 {
+		t.Fatalf("default CliPageSize should be 20: got %d", defaults.CliPageSize)
 	}
 	if defaults.DownloadConcurrency != DefaultWebConcurrency {
 		t.Fatalf("default DownloadConcurrency mismatch: got %d want %d", defaults.DownloadConcurrency, DefaultWebConcurrency)
