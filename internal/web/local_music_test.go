@@ -335,7 +335,7 @@ func TestManualCollectionLocalSongRendersLocalActionOrder(t *testing.T) {
 	removeIndex := strings.Index(card, `removeSongFromCollection`)
 	lyricIndex := strings.Index(card, `class="btn-circle btn-dl btn-lyric"`)
 	coverIndex := strings.Index(card, `class="btn-circle btn-dl btn-cover"`)
-	if !(playIndex < switchIndex && switchIndex < removeIndex && removeIndex < lyricIndex && lyricIndex < coverIndex) {
+	if playIndex >= switchIndex || switchIndex >= removeIndex || removeIndex >= lyricIndex || lyricIndex >= coverIndex {
 		t.Fatalf("manual collection local song action order mismatch: play=%d switch=%d remove=%d lyric=%d cover=%d", playIndex, switchIndex, removeIndex, lyricIndex, coverIndex)
 	}
 }

@@ -1034,6 +1034,10 @@ body.batch-mode .song-card { padding-left: 10px; }
 }
 
 .aplayer.aplayer-fixed { z-index: 10000 !important; }
+.aplayer.aplayer-fixed .aplayer-time .aplayer-icon-loop,
+.aplayer.aplayer-fixed .aplayer-time .aplayer-icon-order {
+    display: inline-block !important;
+}
 
 body.floating-lyrics-disabled .aplayer.aplayer-fixed .aplayer-lrc,
 body.floating-lyrics-disabled .karaoke-lyrics {

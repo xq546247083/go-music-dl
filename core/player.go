@@ -104,11 +104,11 @@ func PreparePlaybackSource(song *model.Song) (playURL string, tempFile string, e
 		}
 		path := f.Name()
 		if _, writeErr := f.Write(data); writeErr != nil {
-			f.Close()
-			os.Remove(path)
+			_ = f.Close()
+			_ = os.Remove(path)
 			return "", "", writeErr
 		}
-		f.Close()
+		_ = f.Close()
 		return path, path, nil
 	}
 
