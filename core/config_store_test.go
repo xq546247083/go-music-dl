@@ -119,6 +119,9 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	if !defaults.AutoSwitchInvalidSources {
 		t.Fatalf("default AutoSwitchInvalidSources should be true")
 	}
+	if !defaults.AutoCacheOnPlay {
+		t.Fatalf("default AutoCacheOnPlay should be true")
+	}
 	if defaults.UpdateRepoURL != DefaultUpdateRepoURL {
 		t.Fatalf("default UpdateRepoURL mismatch: got %q want %q", defaults.UpdateRepoURL, DefaultUpdateRepoURL)
 	}
@@ -152,6 +155,7 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 		DownloadConcurrency:      5,
 		AutoCheckUpdate:          false,
 		AutoSwitchInvalidSources: false,
+		AutoCacheOnPlay:          false,
 		UpdateRepoURL:            "https://github.com/example/fork",
 		GithubProxyEnabled:       true,
 		GithubProxyURL:           "https://gh-proxy.com/",
@@ -175,6 +179,7 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 		DownloadConcurrency:      5,
 		AutoCheckUpdate:          false,
 		AutoSwitchInvalidSources: false,
+		AutoCacheOnPlay:          false,
 		UpdateRepoURL:            "https://github.com/example/fork",
 		GithubProxyEnabled:       true,
 		GithubProxyURL:           "https://gh-proxy.com/",
@@ -219,6 +224,9 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	if got.AutoSwitchInvalidSources {
 		t.Fatalf("custom save should keep AutoSwitchInvalidSources false when omitted: %#v", got)
 	}
+	if got.AutoCacheOnPlay {
+		t.Fatalf("custom save should keep AutoCacheOnPlay false when omitted: %#v", got)
+	}
 	if got.UpdateRepoURL != DefaultUpdateRepoURL {
 		t.Fatalf("custom save should fallback UpdateRepoURL to default: got %q want %q", got.UpdateRepoURL, DefaultUpdateRepoURL)
 	}
@@ -245,7 +253,7 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	}
 }
 
-func TestWebSettingsLegacyPayloadDefaultsAutoSwitchInvalidSources(t *testing.T) {
+func TestWebSettingsLegacyPayloadDefaultsEnabledSwitches(t *testing.T) {
 	baseDir := t.TempDir()
 	t.Setenv("MUSIC_DL_CONFIG_DB", filepath.Join(baseDir, "data", "settings.db"))
 	t.Setenv("MUSIC_DL_COOKIE_FILE", filepath.Join(baseDir, "data", "cookies.json"))
@@ -270,6 +278,9 @@ func TestWebSettingsLegacyPayloadDefaultsAutoSwitchInvalidSources(t *testing.T) 
 	got := GetWebSettings()
 	if !got.AutoSwitchInvalidSources {
 		t.Fatalf("legacy settings should default AutoSwitchInvalidSources to true: %#v", got)
+	}
+	if !got.AutoCacheOnPlay {
+		t.Fatalf("legacy settings should default AutoCacheOnPlay to true: %#v", got)
 	}
 }
 

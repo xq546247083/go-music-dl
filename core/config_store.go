@@ -50,6 +50,7 @@ type WebSettings struct {
 	DownloadConcurrency      int    `json:"downloadConcurrency"`
 	AutoCheckUpdate          bool   `json:"autoCheckUpdate"`
 	AutoSwitchInvalidSources bool   `json:"autoSwitchInvalidSources"`
+	AutoCacheOnPlay          bool   `json:"autoCacheOnPlay"`
 	UpdateRepoURL            string `json:"updateRepoUrl"`
 	GithubProxyEnabled       bool   `json:"githubProxyEnabled"`
 	GithubProxyURL           string `json:"githubProxyUrl"`
@@ -170,6 +171,7 @@ func defaultWebSettings() WebSettings {
 		DownloadConcurrency:      DefaultWebConcurrency,
 		AutoCheckUpdate:          true,
 		AutoSwitchInvalidSources: true,
+		AutoCacheOnPlay:          true,
 		UpdateRepoURL:            DefaultUpdateRepoURL,
 		GithubProxyEnabled:       false,
 		GithubProxyURL:           DefaultGithubProxyURL,

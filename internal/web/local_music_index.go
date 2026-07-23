@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -9,7 +10,15 @@ import (
 
 	"github.com/guohuiyuan/music-lib/model"
 	"gorm.io/gorm/clause"
-)// LocalMusicIndex 是下载目录的搜索索引行。磁盘文件仍是唯一真相，
+)
+
+func formatSizeForIndex(size int64) string {
+	if size == 0 {
+		return "-"
+	}
+	mb := float64(size) / 1024 / 1024
+	return fmt.Sprintf("%.2f MB", mb)
+} // LocalMusicIndex 是下载目录的搜索索引行。磁盘文件仍是唯一真相，
 // 该表只用于加速对大量本地文件的关键词搜索。主键沿用 base64(相对路径)。
 type LocalMusicIndex struct {
 	ID        string    `gorm:"column:id;primaryKey"`
@@ -86,22 +95,110 @@ func syncLocalMusicIndex() error {
 	if db == nil {
 		return nil
 	}
-	tracks, _, _, err := scanLocalMusicTracks()
+	tracks, dir, exists, err := scanLocalMusicTracks()
 	if err != nil {
 		return err
 	}
+	if err := syncTracksToIndex(tracks); err != nil {
+		return err
+	}
+	storeLocalMusicScanSnapshot(localMusicScanSnapshot{
+		Dir:       dir,
+		Tracks:    cloneLocalMusicTrackSlice(tracks),
+		Exists:    exists,
+		ScannedAt: time.Now(),
+	})
+	return nil
+}
 
-	runStart := time.Now()
-	rows := make([]LocalMusicIndex, 0, len(tracks))
-	for _, track := range tracks {
-		if track == nil {
-			continue
-		}
-		rows = append(rows, localMusicTrackToIndexRow(track, runStart))
+// syncLocalMusicIndexAsync 在后台跑一次全量同步，不阻塞调用方（启动时用）。
+func syncLocalMusicIndexAsync() {
+	go func() {
+		_ = syncLocalMusicIndex()
+	}()
+}
+
+// loadTracksFromIndex 从 SQLite 索引表分页读取本地音乐，不走文件系统 IO。
+// 远快于 scanLocalMusicTracks（跳过逐文件读 ID3 标签）。
+func loadTracksFromIndex(offset int, limit int) ([]*localMusicTrack, int, bool) {
+	if db == nil {
+		return nil, 0, false
 	}
 
+	var total int64
+	if err := db.Model(&LocalMusicIndex{}).Count(&total).Error; err != nil || total == 0 {
+		return nil, 0, false
+	}
+
+	var rows []LocalMusicIndex
+	if limit <= 0 {
+		limit = 200
+	}
+	if err := db.Order("mod_time DESC").Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
+		return nil, 0, false
+	}
+
+	rootAbs, _ := filepath.Abs(localMusicDownloadDir())
+	tracks := make([]*localMusicTrack, 0, len(rows))
+	missingIDs := make([]string, 0)
+	for i := range rows {
+		row := &rows[i]
+		// 快速校验文件是否还在磁盘上
+		absPath := filepath.Join(rootAbs, filepath.FromSlash(row.RelPath))
+		if info, statErr := os.Stat(absPath); statErr != nil || info.IsDir() {
+			missingIDs = append(missingIDs, row.ID)
+			continue
+		}
+		cover := row.Cover
+		if cover == "" && row.HasCover {
+			cover = RoutePrefix + "/local_music/cover?id=" + url.QueryEscape(row.ID)
+		}
+		tracks = append(tracks, &localMusicTrack{
+			ID:       row.ID,
+			Source:   localMusicSource,
+			Name:     row.Name,
+			Artist:   row.Artist,
+			Album:    row.Album,
+			Cover:    cover,
+			Duration: row.Duration,
+			Filename: filepath.Base(row.RelPath),
+			RelPath:  row.RelPath,
+			Ext:      row.Ext,
+			Size:     row.Size,
+			SizeText: formatSizeForIndex(row.Size),
+			Extra:    localMusicIndexExtra(row),
+		})
+	}
+	if len(missingIDs) > 0 {
+		if err := db.Where("id IN ?", missingIDs).Delete(&LocalMusicIndex{}).Error; err != nil {
+			return nil, 0, false
+		}
+		total -= int64(len(missingIDs))
+	}
+
+	if len(tracks) == 0 {
+		return nil, 0, false
+	}
+	return tracks, int(total), true
+}
+
+// syncTracksToIndex writes one completed scan and removes rows that did not
+// appear in that scan, including the case where the directory is now empty.
+func syncTracksToIndex(tracks []*localMusicTrack) error {
+	database := db
+	if database == nil {
+		return nil
+	}
+	runStart := time.Now()
+	rows := make([]LocalMusicIndex, 0, len(tracks))
+	for _, t := range tracks {
+		if t == nil {
+			continue
+		}
+		rows = append(rows, localMusicTrackToIndexRow(t, runStart))
+	}
 	if len(rows) > 0 {
-		if err := db.Clauses(clause.OnConflict{
+		if err := database.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
 				"rel_path", "name", "artist", "album", "duration", "size",
@@ -111,16 +208,75 @@ func syncLocalMusicIndex() error {
 			return err
 		}
 	}
-
-	// 清扫本轮未刷新的行（对应已删除/移动的文件）。
-	return db.Where("scanned_at < ?", runStart).Delete(&LocalMusicIndex{}).Error
+	return database.Where("scanned_at < ?", runStart).Delete(&LocalMusicIndex{}).Error
 }
 
-// syncLocalMusicIndexAsync 在后台跑一次全量同步，不阻塞调用方（启动时用）。
-func syncLocalMusicIndexAsync() {
-	go func() {
-		_ = syncLocalMusicIndex()
-	}()
+// findLocalMusicMatch finds a real file among plausible index candidates.
+// An index can temporarily retain rows for files moved outside the download
+// directory, so checking only the first row makes otherwise valid matches fail.
+func findLocalMusicMatch(name string, artist string) (*LocalMusicIndex, string, error) {
+	if db == nil {
+		return nil, "", nil
+	}
+	rootAbs, err := filepath.Abs(localMusicDownloadDir())
+	if err != nil {
+		return nil, "", err
+	}
+
+	seenIDs := make(map[string]struct{})
+	staleIDs := make([]string, 0)
+	findExisting := func(rows []LocalMusicIndex) (*LocalMusicIndex, string) {
+		for i := range rows {
+			row := rows[i]
+			if _, seen := seenIDs[row.ID]; seen {
+				continue
+			}
+			seenIDs[row.ID] = struct{}{}
+
+			absPath := filepath.Join(rootAbs, filepath.FromSlash(row.RelPath))
+			if info, statErr := os.Stat(absPath); statErr != nil || info.IsDir() {
+				staleIDs = append(staleIDs, row.ID)
+				continue
+			}
+			return &row, absPath
+		}
+		return nil, ""
+	}
+	lookup := func(query string, args ...interface{}) (*LocalMusicIndex, string, error) {
+		var rows []LocalMusicIndex
+		if err := db.Where(query, args...).Order("mod_time DESC").Limit(20).Find(&rows).Error; err != nil {
+			return nil, "", err
+		}
+		row, absPath := findExisting(rows)
+		return row, absPath, nil
+	}
+	cleanupStale := func() {
+		if len(staleIDs) > 0 {
+			_ = db.Where("id IN ?", staleIDs).Delete(&LocalMusicIndex{}).Error
+		}
+	}
+
+	if artist != "" {
+		row, absPath, err := lookup("name = ? AND artist = ?", name, artist)
+		if err != nil || row != nil {
+			cleanupStale()
+			return row, absPath, err
+		}
+		// A title alone is not enough when the search result has an artist.
+		// Keep the fuzzy-title fallback within that same artist to avoid
+		// redirecting one artist's song to a different local recording.
+		row, absPath, err = lookup("name LIKE ? AND artist = ?", "%"+name+"%", artist)
+		cleanupStale()
+		return row, absPath, err
+	}
+	row, absPath, err := lookup("name = ?", name)
+	if err != nil || row != nil {
+		cleanupStale()
+		return row, absPath, err
+	}
+	row, absPath, err = lookup("name LIKE ?", "%"+name+"%")
+	cleanupStale()
+	return row, absPath, err
 }
 
 // upsertLocalMusicIndexRow 针对单个文件做定向 upsert（上传后用）。
@@ -220,4 +376,3 @@ func localCollectionSearchPlaylists(keyword string) []model.Playlist {
 	}
 	return playlists
 }
-

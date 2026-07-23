@@ -58,6 +58,14 @@
                 <p class="setting-hint" style="margin-left: 0;">支持 <code>{name}</code>、<code>{artist}</code>、<code>{album}</code>、<code>{source}</code>、<code>{id}</code>、<code>{ext}</code>。未写 <code>{ext}</code> 时会自动追加扩展名；可用 <code>/</code> 或 <code>\</code> 创建相对子目录，例如 <code>{artist}/{album}/{name} - {artist}.{ext}</code>。</p>
             </div>
             <div class="cookie-item setting-item">
+                <label class="setting-toggle" for="setting-auto-cache-on-play">
+                    <input type="checkbox" id="setting-auto-cache-on-play">
+                    <span class="setting-switch" aria-hidden="true"></span>
+                    <span class="setting-toggle-text">播放时自动缓存本地音乐</span>
+                </label>
+                <p class="setting-hint">在线歌曲开始播放后会后台保存到本地下载目录；下次播放匹配成功时优先使用本地文件，默认开启。</p>
+            </div>
+            <div class="cookie-item setting-item">
                 <label class="setting-toggle" for="setting-floating-lyrics">
                     <input type="checkbox" id="setting-floating-lyrics">
                     <span class="setting-switch" aria-hidden="true"></span>

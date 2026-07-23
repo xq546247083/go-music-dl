@@ -245,6 +245,7 @@ func TestSettingsModalIncludesDownloadDirPresets(t *testing.T) {
 	for _, want := range []string{
 		`id="setting-download-dir-preset"`,
 		`id="setting-download-filename-template"`,
+		`id="setting-auto-cache-on-play"`,
 		`id="setting-floating-lyrics"`,
 		`id="setting-auto-switch-invalid-sources"`,
 		`onclick="openAboutAppModal()"`,
