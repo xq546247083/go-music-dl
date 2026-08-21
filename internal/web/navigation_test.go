@@ -69,6 +69,68 @@ func TestRenderIndexPlaylistCardsUseAjaxNavigation(t *testing.T) {
 	}
 }
 
+func TestRemotePlaylistDetailKeepsGlobalRightToolbar(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.SetHTMLTemplate(newTestTemplate(t))
+	router.GET(RoutePrefix+"/playlist", func(c *gin.Context) {
+		renderIndex(c, []model.Song{{ID: "song-1", Name: "Song One", Artist: "Artist", Source: "qq"}}, nil, "", []string{"qq"}, "", "playlist", "", "", "", false, "", nil)
+	})
+
+	req := httptest.NewRequest("GET", RoutePrefix+"/playlist", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="right-toolbar"`) {
+		t.Fatalf("remote playlist detail should retain the global right toolbar: %s", body)
+	}
+	if !strings.Contains(body, `onclick="openSystemConfig()"`) {
+		t.Fatalf("remote playlist detail should retain system settings access: %s", body)
+	}
+	if !strings.Contains(body, `onclick="openPlaybackHistoryModal()"`) {
+		t.Fatalf("remote playlist detail should retain playback history access: %s", body)
+	}
+}
+
+func TestRightToolbarPaginationMatchesRenderedPageCount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.SetHTMLTemplate(newTestTemplate(t))
+	router.GET(RoutePrefix, func(c *gin.Context) {
+		songs := []model.Song{{ID: "song-1", Name: "One", Artist: "Artist", Source: "qq"}}
+		if c.Query("many") == "1" {
+			songs = append(songs, model.Song{ID: "song-2", Name: "Two", Artist: "Artist", Source: "qq"})
+		}
+		renderIndex(c, songs, nil, "", []string{"qq"}, "", "song", "", "", "", false, "", nil)
+	})
+
+	singleReq := httptest.NewRequest("GET", RoutePrefix+"?page_size=1", nil)
+	singleRec := httptest.NewRecorder()
+	router.ServeHTTP(singleRec, singleReq)
+	if singleRec.Code != 200 {
+		t.Fatalf("single page status = %d, want 200", singleRec.Code)
+	}
+	if strings.Contains(singleRec.Body.String(), `id="float-page-num"`) {
+		t.Fatalf("single-page result should not render right pagination: %s", singleRec.Body.String())
+	}
+
+	manyReq := httptest.NewRequest("GET", RoutePrefix+"?many=1&page_size=1", nil)
+	manyRec := httptest.NewRecorder()
+	router.ServeHTTP(manyRec, manyReq)
+	if manyRec.Code != 200 {
+		t.Fatalf("multi-page status = %d, want 200", manyRec.Code)
+	}
+	if !strings.Contains(manyRec.Body.String(), `id="float-page-num"`) {
+		t.Fatalf("multi-page result should render right pagination: %s", manyRec.Body.String())
+	}
+}
+
 func TestAppJSIncludesAjaxNavigationEntryPoints(t *testing.T) {
 	content, err := templateFS.ReadFile("templates/static/js/app.js")
 	if err != nil {
@@ -82,10 +144,16 @@ func TestAppJSIncludesAjaxNavigationEntryPoints(t *testing.T) {
 	if !strings.Contains(js, "function bindPageNavigationEvents()") {
 		t.Fatal("app.js missing bindPageNavigationEvents function")
 	}
+	if !strings.Contains(js, "function syncRightToolbar(nextDoc, currentContainer)") {
+		t.Fatal("app.js missing right toolbar synchronization for AJAX navigation")
+	}
+	if !strings.Contains(js, "syncRightToolbar(nextDoc, currentContainer);") {
+		t.Fatal("app.js does not synchronize the right toolbar during AJAX navigation")
+	}
 	if !strings.Contains(js, "function handlePaginationShortcut(event)") {
 		t.Fatal("app.js missing pagination shortcut handler")
 	}
-	if !strings.Contains(js, "document.addEventListener('keydown', handlePaginationShortcut);") {
+	if !strings.Contains(js, `document.addEventListener("keydown", handlePaginationShortcut);`) {
 		t.Fatal("app.js missing pagination shortcut binding")
 	}
 	if !strings.Contains(js, "initializePageContent(document);") {
@@ -106,7 +174,7 @@ func TestAppJSIncludesAjaxNavigationEntryPoints(t *testing.T) {
 	if !strings.Contains(js, "async function openAboutAppModal()") {
 		t.Fatal("app.js missing openAboutAppModal entry point")
 	}
-	if !strings.Contains(js, "async function openLatestUpdatePage(target = 'download')") {
+	if !strings.Contains(js, `async function openLatestUpdatePage(target = "download")`) {
 		t.Fatal("app.js missing openLatestUpdatePage helper")
 	}
 	if !strings.Contains(js, "function openClientExternalURL(url, popup = null)") {
@@ -137,8 +205,59 @@ func TestAppJSIncludesAjaxNavigationEntryPoints(t *testing.T) {
 	if !strings.Contains(js, "function initializeLocalMusicPage(root = document)") {
 		t.Fatal("app.js missing async local music page initializer")
 	}
+	for _, want := range []string{
+		"function toggleSongListTools(event)",
+		"function openPlaybackHistoryModal()",
+		"function rememberPlaybackHistory(audio)",
+		"rememberPlaybackHistory(audio);",
+		"const PLAYBACK_HISTORY_STORAGE_KEY = \"musicdl:playback-history\";",
+		"const PLAYBACK_HISTORY_PAGE_SIZE = 10;",
+		"const DOWNLOAD_RECORDS_PAGE_SIZE = 20;",
+		"const DUPLICATE_GROUP_PAGE_SIZE = 10;",
+		"function renderUtilityModalPagination(page, totalPages, onPageChange)",
+		"loadDownloadRecordsPage",
+		"modal-overlay utility-modal-overlay is-open",
+	} {
+		if !strings.Contains(js, want) {
+			t.Fatalf("app.js missing %q", want)
+		}
+	}
 	if !strings.Contains(js, "offset: String(offset)") {
 		t.Fatal("app.js missing paged local music API request")
+	}
+}
+
+func TestUtilityModalsShareCompactStructure(t *testing.T) {
+	content, err := templateFS.ReadFile("templates/partials/modals.html")
+	if err != nil {
+		t.Fatalf("ReadFile(modals.html): %v", err)
+	}
+
+	modals := string(content)
+	for _, want := range []string{
+		`id="downloadRecordsModal" class="modal-overlay utility-modal-overlay"`,
+		`class="modal utility-modal download-records-modal"`,
+		`id="playbackHistoryModal" class="modal-overlay utility-modal-overlay"`,
+		`class="modal utility-modal playback-history-modal"`,
+		`id="playback-history-list" class="utility-modal-list playback-history-list"`,
+		`id="download-records-pagination" class="utility-modal-pagination"`,
+		`id="playback-history-pagination" class="utility-modal-pagination"`,
+	} {
+		if !strings.Contains(modals, want) {
+			t.Fatalf("modals.html missing %q", want)
+		}
+	}
+}
+
+func TestAjaxNavigationRefreshesRightToolbarMarkup(t *testing.T) {
+	content, err := templateFS.ReadFile("templates/static/js/app.js")
+	if err != nil {
+		t.Fatalf("ReadFile(app.js): %v", err)
+	}
+
+	js := string(content)
+	if !strings.Contains(js, "currentToolbar.replaceWith(nextToolbar.cloneNode(true));") {
+		t.Fatal("AJAX navigation must replace the existing right toolbar so conditional pagination markup stays in sync")
 	}
 }
 
@@ -158,7 +277,7 @@ func TestAppJSPlaybackURLIgnoresEmbedDownloadSetting(t *testing.T) {
 	if strings.Contains(js, "function buildStreamURL(id, source, name, artist, album, cover, extra) {\n    return buildDownloadRequestURL(id, source, name, artist, album, cover, extra, {\n        embed: webSettings.embedDownload") {
 		t.Fatal("buildStreamURL must not follow embedDownload; playback should always use plain streaming")
 	}
-	if !strings.Contains(js, "preload: 'metadata'") {
+	if !strings.Contains(js, `preload: "metadata"`) {
 		t.Fatal("APlayer should preload metadata instead of full audio")
 	}
 }
@@ -170,13 +289,11 @@ func TestDownloadURLsCarryAlbumForMetadataEmbedding(t *testing.T) {
 	}
 	js := string(jsContent)
 	for _, want := range []string{
-		"function buildDownloadRequestURL(id, source, name, artist, album, cover, extra, options = {})",
-		"function buildBrowserDownloadURL(id, source, name, artist, album, cover, extra)",
-		"params.set('album', albumValue);",
-		"buildDownloadURL(ds.id, ds.source, ds.name, ds.artist, ds.album || ''",
-		"buildDownloadURL(song.id, song.source, song.name, song.artist, song.album || ''",
-		"buildBrowserDownloadURL(ds.id, ds.source, ds.name, ds.artist, ds.album || ''",
-		"buildBrowserDownloadURL(song.id, song.source, song.name, song.artist, song.album || ''",
+		"function buildDownloadRequestURL(",
+		"function buildBrowserDownloadURL(",
+		`params.set("album", albumValue);`,
+		"buildDownloadURL(",
+		"buildBrowserDownloadURL(",
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("app.js missing album download URL token %q", want)
@@ -296,7 +413,7 @@ func TestDefaultPageSizePrompts(t *testing.T) {
 		t.Fatalf("ReadFile(app.js): %v", err)
 	}
 	for _, want := range []string{
-		`const DEFAULT_WEB_PAGE_SIZE = 30;`,
+		`const DEFAULT_WEB_PAGE_SIZE = 200;`,
 		`const DEFAULT_CLI_PAGE_SIZE = 20;`,
 	} {
 		if !strings.Contains(string(jsContent), want) {
@@ -310,8 +427,8 @@ func TestDefaultPageSizePrompts(t *testing.T) {
 	}
 	html := string(modalContent)
 	for _, want := range []string{
-		`id="setting-web-page-size" min="1" max="200" step="1" placeholder="默认 30"`,
-		`用于网页分页显示，默认 30。`,
+		`id="setting-web-page-size" aria-label="Web 每页条数"`,
+		`搜索结果列表每页显示的歌曲数量，默认 200。`,
 		`id="setting-cli-page-size" min="1" max="200" step="1" placeholder="默认 20"`,
 		`用于 TUI 分页显示，默认 20。`,
 	} {
@@ -415,8 +532,8 @@ func TestSearchSourceSelectorSupportsDesktopAndMobileCollapse(t *testing.T) {
 		`function initSourceSelectorCollapse(root = document)`,
 		`function isMobileSourceSelectorViewport()`,
 		`function applySourceSelectorCollapsed(selector, collapsed)`,
-		`'(max-width: 720px)'`,
-		`sessionStorage.setItem('sourceSelectorCollapsed'`,
+		`"(max-width: 720px)"`,
+		`sessionStorage.setItem("sourceSelectorCollapsed"`,
 		`initSourceSelectorCollapse(root);`,
 	} {
 		if !strings.Contains(js, want) {

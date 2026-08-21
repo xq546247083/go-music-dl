@@ -27,6 +27,29 @@ Go Music DL 是一个音乐搜索与下载工具，支持 **Web 界面**、**TUI
 
 ```
 
+Web 服务默认挂载于 `/music` 路径下。如需通过反向代理挂载到二级目录，可使用 `--base-path` 参数：
+
+```bash
+./music-dl web --base-path /dl
+```
+
+对应的 Nginx 反向代理示例：
+
+```nginx
+location /dl/ {
+	proxy_pass http://127.0.0.1:8080;
+
+	proxy_set_header Host $host;
+	proxy_set_header X-Real-IP $remote_addr;
+	proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+	proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location = /dl {
+	return 301 /dl/;
+}
+```
+
 Web 模式默认不要求登录即可搜索、播放、下载、浏览歌单 / 专辑和使用本地歌单等普通功能。只有进入右上角 **设置**、保存系统设置、管理平台 Cookie、通过扫码登录写入 Cookie 等系统配置操作需要管理员登录。
 
 首次触发系统配置登录时，如果还没有管理员账号，启动终端会打印一次性初始化令牌。打开初始化页后填入该令牌，并设置用户名和至少 6 位密码即可创建管理员账号；之后点击设置或右上角登录按钮会进入登录流程。会话 Cookie 默认保留 7 天，右上角按钮会根据状态切换为登录 / 退出登录；退出后会回到首页，普通功能仍可继续使用。
@@ -158,7 +181,7 @@ ffmpeg -version
 
 ## 新增改动（简要）
 
-* **播放自动缓存开关**：系统设置新增“播放时自动缓存本地音乐”，默认开启；关闭后在线歌曲不会再发起新的后台缓存请求。
+* **播放自动缓存开关**：系统设置提供“播放时自动缓存本地音乐”，默认关闭，避免持续占用储存空间；需要时可手动开启。
 * **本地音乐分页与同步优化**：本地音乐分页在切换每页条数或连续翻页时会保留最后一次请求并对短暂网络错误重试，避免直接显示 `Failed to fetch`；上传、删除、播放时本地缓存和后台扫描会自动同步 SQLite 索引，因此已移除界面的“刷新索引”按钮。重复检测弹窗删除歌曲后会同步刷新底部列表、总数和分页。
 * **本地已有匹配更准确**：在线结果带有歌手信息时，“本地已有”必须同时匹配歌名和歌手；同名但不同歌手的歌曲不会再被标记为本地已有或错误改用本地文件播放。
 * **播放器控件调整**：播放顺序 / 随机 / 单曲循环切换按钮改为封面上方的图标按钮，不再遮挡播放或暂停操作。
@@ -460,7 +483,7 @@ TUI 在输入界面按 `w` 直接拉取推荐歌单，然后回车进详情。
 | 酷我音乐    | `kuwo`     | ✅   | ✅   | ✅   | ✅       | ✅       | ✅       | ✅       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           |                                        |
 | 咪咕音乐    | `migu`     | ✅   | ✅   | ✅   | ✅       | ✅       | ❌       | ✅       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           | 歌单歌曲使用 MIGUM3 接口               |
 | 千千音乐    | `qianqian` | ✅   | ✅   | ✅   | ✅       | ⚠️     | ❌       | ✅       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           | 歌单搜索可能返回空，已知 ID/链接可解析 |
-| 汽水音乐    | `soda`     | ✅   | ✅   | ✅   | ✅       | ✅       | ❌       | ❌       | ✅       | ⚠️ 未调通 | ✅       | ✅           | ✅       | ✅       | ✅           | 音频解密，支持短链和个人歌单；扫码登录暂未调通 |
+| 汽水音乐    | `soda`     | ❌   | ✅   | ✅   | ✅       | ✅       | ❌       | ❌       | ✅       | ⚠️ 未调通 | ✅       | ✅           | ✅       | ✅       | ✅           | 单曲搜索未调通；音频解密，支持短链和个人歌单；扫码登录暂未调通 |
 | 5sing       | `fivesing` | ✅   | ✅   | ✅   | ✅       | ✅       | ❌       | ❌       | ❌       | ❌          | ✅       | ✅           | ❌       | ❌       | ❌           |                                        |
 | Jamendo     | `jamendo`  | ✅   | ✅   | ✅   | ✅       | ⚠️     | ❌       | ❌       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           | 歌单搜索可能返回空，公开歌单链接可解析 |
 | JOOX        | `joox`     | ✅   | ✅   | ✅   | ✅       | ✅       | ❌       | ✅       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           | 歌单支持 OpenJOOX 接口和网页数据兜底   |
@@ -652,4 +675,4 @@ go-music-dl/
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/image?repos=guohuiyuan/go-music-dl&type=date&legend=top-left)](https://www.star-history.com/?repos=guohuiyuan%2Fgo-music-dl&type=date&legend=top-left)
+[![Star History Chart](https://star-history.dera.page/svg?repos=guohuiyuan/go-music-dl&type=date&legend=top-left)](https://star-history.dera.page/#guohuiyuan/go-music-dl&type=date&legend=top-left)

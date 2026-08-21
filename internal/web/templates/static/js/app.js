@@ -4,7 +4,7 @@ const API_ROOT = window.API_ROOT;
 const WEB_SETTINGS_KEY = "musicdl:web_settings";
 const INSPECT_REQUEST_DELAY_MS = 100;
 const AUTO_SWITCH_INVALID_DELAY_MS = 500;
-const DEFAULT_WEB_PAGE_SIZE = 30;
+const DEFAULT_WEB_PAGE_SIZE = 200;
 const DEFAULT_CLI_PAGE_SIZE = 20;
 const LOCAL_MUSIC_SOURCE = "local";
 const LEGACY_LOCAL_MUSIC_SOURCE = "local-file";
@@ -20,6 +20,7 @@ const DOWNLOAD_DIR_PRESET_VALUES = [
 const DOWNLOAD_DIR_PRESETS = new Set(DOWNLOAD_DIR_PRESET_VALUES);
 const DEFAULT_UPDATE_REPO_URL = "https://github.com/guohuiyuan/go-music-dl";
 const DEFAULT_GITHUB_PROXY_URL = "https://edgeone.gh-proxy.com";
+const BATCH_DOWNLOAD_NOTICE_MS = 4200;
 const OPEN_CONFIG_QUERY = "open_config";
 const GITHUB_PROXY_PRESETS = [
   "https://edgeone.gh-proxy.com",
@@ -43,7 +44,7 @@ let webSettings = {
   cliPageSize: DEFAULT_CLI_PAGE_SIZE,
   autoCheckUpdate: true,
   autoSwitchInvalidSources: true,
-  autoCacheOnPlay: true,
+  autoCacheOnPlay: false,
   updateRepoUrl: DEFAULT_UPDATE_REPO_URL,
   githubProxyEnabled: false,
   githubProxyUrl: DEFAULT_GITHUB_PROXY_URL,
@@ -64,7 +65,7 @@ function normalizeWebSettings(raw) {
     cliPageSize: DEFAULT_CLI_PAGE_SIZE,
     autoCheckUpdate: true,
     autoSwitchInvalidSources: true,
-    autoCacheOnPlay: true,
+    autoCacheOnPlay: false,
     updateRepoUrl: DEFAULT_UPDATE_REPO_URL,
     githubProxyEnabled: false,
     githubProxyUrl: DEFAULT_GITHUB_PROXY_URL,
@@ -94,7 +95,7 @@ function normalizeWebSettings(raw) {
     next.disableFloatingLyrics = raw.disableFloatingLyrics;
   }
   if (Number.isInteger(raw.webPageSize) && raw.webPageSize > 0) {
-    next.webPageSize = Math.min(raw.webPageSize, 200);
+    next.webPageSize = Math.min(raw.webPageSize, 500);
   }
   if (Number.isInteger(raw.cliPageSize) && raw.cliPageSize > 0) {
     next.cliPageSize = Math.min(raw.cliPageSize, 200);
@@ -381,6 +382,11 @@ function setAuthFloatLoggedIn(loggedIn) {
 
 async function refreshAuthFloat() {
   try {
+    // 桌面模式（127.0.0.1:37777）无认证概念，直接显示未登录
+    if (window.location.port === "37777" && window.location.hostname === "127.0.0.1") {
+      setAuthFloatLoggedIn(false);
+      return;
+    }
     const response = await fetch(API_ROOT + "/cookies", {
       method: "HEAD",
       headers: { Accept: "application/json" },
@@ -658,7 +664,7 @@ function buildBatchFailureMessage(failures, title) {
   return message;
 }
 
-function showToast(title, message = "", type = "info", duration = 5000) {
+function showToast(title, message = "", type = "info", duration = 0) {
   let container = document.getElementById("app-toast-container");
   if (!container) {
     container = document.createElement("div");
@@ -678,14 +684,20 @@ function showToast(title, message = "", type = "info", duration = 5000) {
   ].join("");
   container.appendChild(toast);
 
-  const close = () => {
+  const close = (immediate = false) => {
+    if (!toast.isConnected) return;
+    if (immediate) {
+      toast.remove();
+      return;
+    }
     toast.classList.add("app-toast-hide");
     window.setTimeout(() => toast.remove(), 220);
   };
-  toast.querySelector(".app-toast-close")?.addEventListener("click", close);
+  toast.querySelector(".app-toast-close")?.addEventListener("click", () => close());
   if (duration > 0) {
     window.setTimeout(close, duration);
   }
+  return close;
 }
 
 function inferExtFromContentType(contentType) {
@@ -778,10 +790,10 @@ async function handleDownloadClick(link) {
     if (data.warning) {
       message += `\n提示: ${data.warning}`;
     }
-    showToast("下载完成", message, data.warning ? "warning" : "success");
+    showToast("下载完成", message, data.warning ? "warning" : "success", 0);
     return true;
   } catch (error) {
-    showToast("下载失败", error.message || "下载失败", "error");
+    showToast("下载失败", error.message || "下载失败", "error", 0);
   } finally {
     link.style.pointerEvents = "";
     link.style.opacity = "";
@@ -938,7 +950,7 @@ let currentPlayingId = null;
 window.currentPlayingId = null;
 
 function isAutoCacheOnPlayEnabled() {
-  return webSettings.autoCacheOnPlay !== false;
+  return webSettings.autoCacheOnPlay === true;
 }
 
 function scheduleAutoCache(audio) {
@@ -1086,6 +1098,7 @@ function initializePageContent(root = document) {
   initSourceSelectorCollapse(root);
   bindSearchForm(root);
   bindSongSortControls(root);
+  bindSongListTools(root);
 
   const initialTypeEl = root.querySelector('input[name="type"]:checked');
   if (initialTypeEl) {
@@ -1100,6 +1113,40 @@ function initializePageContent(root = document) {
   syncMediaSession();
   initializeLocalMusicPage(root);
   scheduleBatchLocalMusicMatch();
+}
+
+function setSongListToolsOpen(tools, isOpen) {
+  if (!tools) return;
+  const trigger = tools.querySelector(".song-list-tools-trigger");
+  const popover = tools.querySelector(".song-list-tools-popover");
+  if (!trigger || !popover) return;
+  popover.hidden = !isOpen;
+  trigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+
+function closeSongListTools() {
+  document.querySelectorAll(".song-list-tools").forEach((tools) => {
+    setSongListToolsOpen(tools, false);
+  });
+}
+
+function toggleSongListTools(event) {
+  event?.stopPropagation();
+  const tools = event?.currentTarget?.closest(".song-list-tools");
+  if (!tools) return;
+  const popover = tools.querySelector(".song-list-tools-popover");
+  const isOpen = popover ? !popover.hidden : false;
+  closeSongListTools();
+  setSongListToolsOpen(tools, !isOpen);
+}
+
+function bindSongListTools(root = document) {
+  const scope = root && typeof root.querySelectorAll === "function" ? root : document;
+  scope.querySelectorAll(".song-list-tools").forEach((tools) => {
+    if (tools.dataset.bound === "1") return;
+    tools.dataset.bound = "1";
+    setSongListToolsOpen(tools, false);
+  });
 }
 
 function shouldHandleInternalNavigation(link, event) {
@@ -1154,6 +1201,25 @@ function shouldHandleInternalNavigation(link, event) {
   );
 }
 
+function syncRightToolbar(nextDoc, currentContainer) {
+  const currentToolbar = document.querySelector(".right-toolbar");
+  const nextToolbar = nextDoc.querySelector(".right-toolbar");
+
+  if (!nextToolbar) {
+    if (currentToolbar) currentToolbar.remove();
+    return;
+  }
+
+  // 分页区由服务端按当前结果页生成，Ajax 导航时必须整体替换，避免保留上一页的按钮状态。
+  if (currentToolbar) {
+    currentToolbar.replaceWith(nextToolbar.cloneNode(true));
+  } else if (currentContainer) {
+    currentContainer.before(nextToolbar.cloneNode(true));
+  }
+  bindAuthFloat();
+  refreshAuthFloat();
+}
+
 async function navigateTo(url, options = {}) {
   let targetURL;
   try {
@@ -1199,8 +1265,17 @@ async function navigateTo(url, options = {}) {
     }
 
     currentContainer.innerHTML = nextContainer.innerHTML;
+    syncRightToolbar(nextDoc, currentContainer);
     defaultDocumentTitle = nextDoc.title || defaultDocumentTitle;
     document.title = defaultDocumentTitle;
+
+    const renderedPage = nextContainer.querySelector(".page-summary");
+    const renderedPageMatch = renderedPage
+      ? renderedPage.textContent.match(/(\d+)\s*\/\s*(\d+)/)
+      : null;
+    if (renderedPageMatch && targetURL.searchParams.has("page")) {
+      targetURL.searchParams.set("page", renderedPageMatch[1]);
+    }
 
     const historyMode = options.historyMode || "push";
     if (historyMode === "replace") {
@@ -1214,6 +1289,7 @@ async function navigateTo(url, options = {}) {
     }
 
     initializePageContent(currentContainer);
+    updateFloatPageNav();
 
     if (options.scroll !== false) {
       window.scrollTo({ top: 0, behavior: "auto" });
@@ -1353,6 +1429,12 @@ function bindPageNavigationEvents() {
     await handleDownloadClick(link);
   });
 
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest(".song-list-tools")) {
+      closeSongListTools();
+    }
+  });
+
   document.addEventListener(
     "click",
     function (event) {
@@ -1367,6 +1449,9 @@ function bindPageNavigationEvents() {
 
   document.addEventListener("keydown", handlePaginationShortcut);
   document.addEventListener("keydown", handlePlaybackShortcut);
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") closeSongListTools();
+  });
 
   window.addEventListener("popstate", function () {
     navigateTo(window.location.href, {
@@ -1384,6 +1469,7 @@ document.addEventListener("DOMContentLoaded", function () {
   fetchWebSettings().finally(() => maybeAutoCheckUpdate());
   bindPageNavigationEvents();
   initializePageContent(document);
+  updateFloatPageNav();
   if (
     new URLSearchParams(window.location.search).get(OPEN_CONFIG_QUERY) === "1"
   ) {
@@ -2041,6 +2127,7 @@ async function loadLocalMusicPage(page = 1, options = {}) {
     }
 
     renderLocalMusicPagePagination(targetPage, totalPages);
+    updateFloatPageNav();
     refreshDownloadLinks(list);
     bindSongSortControls(list);
     bindSongCardCovers(list);
@@ -2081,16 +2168,28 @@ function initializeLocalMusicPage(root = document) {
   });
 }
 
-async function checkDuplicateSongs() {
+const DUPLICATE_GROUP_PAGE_SIZE = 10;
+let activeDuplicatePage = 1;
+
+async function checkDuplicateSongs(page = 1) {
   // 显示 loading 弹窗
   showDuplicateModal(null, true);
   try {
-    const resp = await fetch(API_ROOT + "/local_music/duplicates");
+    const params = new URLSearchParams({
+      page: String(Math.max(1, parsePositiveInt(page, 1))),
+      page_size: String(DUPLICATE_GROUP_PAGE_SIZE),
+    });
+    const resp = await fetch(`${API_ROOT}/local_music/duplicates?${params}`);
     if (!resp.ok) throw new Error("API error");
     const data = await resp.json();
-    showDuplicateModal(data.groups || [], false);
+    activeDuplicatePage = Math.max(1, parsePositiveInt(data.page, 1));
+    showDuplicateModal(data.groups || [], false, {
+      page: activeDuplicatePage,
+      total: Math.max(0, parsePositiveInt(data.total, 0)),
+      totalPages: Math.max(1, parsePositiveInt(data.total_pages, 1)),
+    });
   } catch (_) {
-    showDuplicateModal([], false);
+    showDuplicateModal([], false, { page: 1, total: 0, totalPages: 1 });
   }
 }
 
@@ -2105,54 +2204,41 @@ async function refreshLocalMusicPageAfterMutation() {
   return refreshCurrentPageContent({ scroll: false });
 }
 
-function showDuplicateModal(groups, loading) {
-  // 移除旧弹窗
+function showDuplicateModal(groups, loading, pagination = {}) {
   const old = document.getElementById("duplicate-modal-overlay");
   if (old) old.remove();
 
   const overlay = document.createElement("div");
   overlay.id = "duplicate-modal-overlay";
-  overlay.style.cssText =
-    "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:20000;display:flex;align-items:center;justify-content:center;padding:20px;";
+  overlay.className = "modal-overlay utility-modal-overlay is-open";
   overlay.onclick = (e) => {
     if (e.target === overlay) overlay.remove();
   };
 
   const modal = document.createElement("div");
-  modal.style.cssText =
-    "background:#fff;border-radius:16px;width:100%;max-width:640px;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);";
-
-  // Header
+  modal.className = "modal utility-modal duplicate-modal";
   const header = document.createElement("div");
-  header.style.cssText =
-    "display:flex;align-items:center;padding:20px 24px 16px;border-bottom:1px solid #eee;";
-  header.innerHTML =
-    '<h3 style="margin:0;font-size:17px;color:#c45500;"><i class="fa-solid fa-triangle-exclamation"></i> 重复歌曲检测</h3>';
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.textContent = "✕";
-  closeBtn.style.cssText =
-    "margin-left:auto;font-size:18px;background:none;border:none;cursor:pointer;color:#999;padding:4px 8px;";
-  closeBtn.onclick = () => overlay.remove();
-  header.appendChild(closeBtn);
+  header.className = "modal-header";
+  header.innerHTML = [
+    '<div><h3><i class="fa-solid fa-triangle-exclamation"></i> 重复歌曲检测</h3><p class="utility-modal-subtitle">按歌曲名和歌手聚合本地音乐</p></div>',
+    '<button type="button" class="modal-close" aria-label="关闭重复检测"><i class="fa-solid fa-xmark"></i></button>',
+  ].join("");
+  header.querySelector(".modal-close")?.addEventListener("click", () => overlay.remove());
   modal.appendChild(header);
 
-  // Body
   const body = document.createElement("div");
-  body.style.cssText = "overflow-y:auto;padding:16px 24px;flex:1;";
+  body.className = "modal-body duplicate-content";
 
   if (loading) {
-    body.innerHTML =
-      '<div style="text-align:center;padding:40px;color:#999;"><i class="fa-solid fa-spinner fa-spin fa-2x"></i><p style="margin-top:12px;">正在扫描...</p></div>';
+    body.innerHTML = '<div class="duplicate-state is-loading"><div><i class="fa-solid fa-spinner fa-spin"></i><br>正在扫描本地音乐...</div></div>';
   } else if (!groups || groups.length === 0) {
-    body.innerHTML =
-      '<div style="text-align:center;padding:40px;color:#10b981;"><i class="fa-solid fa-circle-check fa-2x"></i><p style="margin-top:12px;">未发现重复歌曲 🎉</p></div>';
+    body.innerHTML = '<div class="duplicate-state is-clean"><div><i class="fa-solid fa-circle-check"></i><br>未发现重复歌曲</div></div>';
   } else {
     groups.forEach((g, gi) => {
       const gp = document.createElement("div");
-      gp.style.cssText =
-        "margin-bottom:14px;padding:12px;background:#fff8f0;border:1px solid #f0d5a0;border-radius:8px;";
-      gp.innerHTML = `<div style="font-weight:600;margin-bottom:8px;">${gi + 1}. ${escapeHTML(g.name)} — ${escapeHTML(g.artist)}</div>`;
+      gp.className = "duplicate-group";
+      const firstNumber = ((pagination.page || 1) - 1) * DUPLICATE_GROUP_PAGE_SIZE + gi + 1;
+      gp.innerHTML = `<div class="duplicate-group-title">${firstNumber}. ${escapeHTML(g.name)} · ${escapeHTML(g.artist)}</div>`;
 
       g.songs.forEach((s) => {
         const sizeStr = s.size ? (s.size / 1048576).toFixed(1) + "MB" : "?";
@@ -2162,15 +2248,14 @@ function showDuplicateModal(groups, loading) {
             String(s.duration % 60).padStart(2, "0")
           : "?";
         const row = document.createElement("div");
-        row.style.cssText =
-          "display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 8px;background:#fff;border-radius:4px;margin-bottom:3px;";
-        row.innerHTML = `<span style="flex:1;color:#555;">${s.ext || "?"} · ${sizeStr} · ${durStr}</span>`;
+        row.className = "duplicate-row";
+        row.innerHTML = `<span class="duplicate-meta">${escapeHTML(s.ext || "?")} · ${sizeStr} · ${durStr}</span><span class="duplicate-actions"></span>`;
+        const actions = row.querySelector(".duplicate-actions");
 
         const playBtn = document.createElement("button");
         playBtn.type = "button";
-        playBtn.style.cssText =
-          "font-size:11px;padding:2px 8px;background:#10b981;color:#fff;border:none;border-radius:4px;cursor:pointer;";
-        playBtn.textContent = "播放";
+        playBtn.className = "btn-pill btn-pill-primary";
+        playBtn.innerHTML = '<i class="fa-solid fa-play"></i> 播放';
         playBtn.onclick = () => {
           ap.list.clear();
           ap.list.add([
@@ -2191,9 +2276,8 @@ function showDuplicateModal(groups, loading) {
 
         const delBtn = document.createElement("button");
         delBtn.type = "button";
-        delBtn.style.cssText =
-          "font-size:11px;padding:2px 8px;background:#e53e3e;color:#fff;border:none;border-radius:4px;cursor:pointer;";
-        delBtn.textContent = "删除";
+        delBtn.className = "btn-pill btn-pill-danger";
+        delBtn.innerHTML = '<i class="fa-solid fa-trash"></i> 删除';
         delBtn.onclick = async () => {
           if (!confirm(`确定删除 "${s.name}"?`)) return;
           const originalHTML = delBtn.innerHTML;
@@ -2203,7 +2287,7 @@ function showDuplicateModal(groups, loading) {
             await deleteLocalMusic(s.id);
             stopDeletedLocalMusicPlayback(new Set([s.id]));
             await refreshLocalMusicPageAfterMutation();
-            await checkDuplicateSongs();
+            await checkDuplicateSongs(activeDuplicatePage);
           } catch (error) {
             alert(error.message || "删除失败");
           } finally {
@@ -2214,12 +2298,20 @@ function showDuplicateModal(groups, loading) {
           }
         };
 
-        row.appendChild(playBtn);
-        row.appendChild(delBtn);
+        actions.appendChild(playBtn);
+        actions.appendChild(delBtn);
         gp.appendChild(row);
       });
       body.appendChild(gp);
     });
+    body.insertAdjacentHTML(
+      "beforeend",
+      renderUtilityModalPagination(
+        pagination.page || 1,
+        pagination.totalPages || 1,
+        "checkDuplicateSongs",
+      ),
+    );
   }
 
   modal.appendChild(body);
@@ -3162,6 +3254,370 @@ function closeUpdateModal() {
   if (modal) modal.style.display = "none";
 }
 
+// ==========================================
+// 下载记录
+// ==========================================
+
+const DOWNLOAD_RECORDS_PAGE_SIZE = 20;
+let activeDownloadRecordsPage = 1;
+
+function renderUtilityModalPagination(page, totalPages, onPageChange) {
+  if (totalPages <= 1) return "";
+  return `<button type="button" class="utility-modal-page-button" onclick="${onPageChange}(${page - 1})" ${page <= 1 ? "disabled" : ""} aria-label="上一页"><i class="fa-solid fa-chevron-left"></i></button>
+    <span class="utility-modal-page-status">第 ${page} / ${totalPages} 页</span>
+    <button type="button" class="utility-modal-page-button" onclick="${onPageChange}(${page + 1})" ${page >= totalPages ? "disabled" : ""} aria-label="下一页"><i class="fa-solid fa-chevron-right"></i></button>`;
+}
+
+async function openDownloadRecordsModal() {
+  const modal = document.getElementById("downloadRecordsModal");
+  if (!modal) return;
+  setDownloadRecordsButtonState("idle");
+  modal.style.display = "flex";
+
+  await loadDownloadRecordsPage(1);
+}
+
+function setDownloadRecordsButtonState(state = "idle") {
+  const button = document.getElementById("download-records-button");
+  if (!button) return;
+
+  const downloading = state === "downloading";
+  const updated = state === "updated";
+  button.classList.toggle("is-downloading", downloading);
+  button.classList.toggle("has-download-updates", updated);
+
+  const label = downloading
+    ? "下载记录，批量下载进行中"
+    : updated
+      ? "下载记录，有新的下载结果"
+      : "下载记录";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+}
+
+async function refreshOpenDownloadRecords() {
+  const modal = document.getElementById("downloadRecordsModal");
+  if (!modal || modal.style.display !== "flex") return false;
+  await loadDownloadRecordsPage(1);
+  return true;
+}
+
+async function loadDownloadRecordsPage(page = 1) {
+  const countEl = document.getElementById("download-records-count");
+  const listEl = document.getElementById("download-records-list");
+  const paginationEl = document.getElementById("download-records-pagination");
+  if (countEl) countEl.textContent = "加载中...";
+  if (listEl) listEl.innerHTML = "";
+  if (paginationEl) paginationEl.innerHTML = "";
+
+  const params = new URLSearchParams({
+    page: String(Math.max(1, parsePositiveInt(page, 1))),
+    page_size: String(DOWNLOAD_RECORDS_PAGE_SIZE),
+  });
+
+  try {
+    const resp = await fetch(`${API_ROOT}/api/downloads/records?${params}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const records = data.records || [];
+    activeDownloadRecordsPage = Math.max(1, parsePositiveInt(data.page, 1));
+    const total = Math.max(0, parsePositiveInt(data.total, 0));
+    const totalPages = Math.max(1, parsePositiveInt(data.total_pages, 1));
+
+    if (countEl) {
+      const success = records.filter(r => r.Status === "success").length;
+      const skipped = records.filter(r => r.Status === "skipped").length;
+      const failed = records.filter(r => r.Status === "failed").length;
+      countEl.textContent = `共 ${total} 条  ·  本页成功 ${success}  ·  跳过 ${skipped}  ·  失败 ${failed}`;
+    }
+
+    if (records.length === 0) {
+      if (listEl) listEl.innerHTML = '<div class="download-records-empty"><div><i class="fa-regular fa-clock"></i><br>暂无下载记录</div></div>';
+      return;
+    }
+
+    let html = `<table class="download-records-table">
+      <thead><tr>
+        <th>歌曲</th>
+        <th>歌手</th>
+        <th>来源</th>
+        <th>状态</th>
+        <th>时间</th>
+      </tr></thead><tbody>`;
+
+    for (const r of records) {
+      const status = r.Status === "success"
+        ? { className: "is-success", icon: "fa-check", label: "成功" }
+        : r.Status === "skipped"
+          ? { className: "is-skipped", icon: "fa-forward", label: "跳过" }
+          : { className: "is-failed", icon: "fa-xmark", label: "失败" };
+      const errHint = r.Error ? ` title="${escapeHtml(r.Error)}"` : "";
+      const time = r.CreatedAt ? new Date(r.CreatedAt).toLocaleString() : "";
+      html += `<tr${errHint}>
+        <td><div class="download-record-name">${escapeHtml(r.Name || "")}</div></td>
+        <td><div class="download-record-artist">${escapeHtml(r.Artist || "")}</div></td>
+        <td><span class="download-record-source">${escapeHtml(r.Source || "")}</span></td>
+        <td><span class="download-record-status ${status.className}"><i class="fa-solid ${status.icon}"></i>${status.label}</span></td>
+        <td class="download-record-time">${escapeHtml(time)}</td>
+      </tr>`;
+    }
+
+    html += "</tbody></table>";
+    if (listEl) listEl.innerHTML = html;
+    if (paginationEl) {
+      paginationEl.innerHTML = renderUtilityModalPagination(
+        activeDownloadRecordsPage,
+        totalPages,
+        "loadDownloadRecordsPage",
+      );
+    }
+  } catch (err) {
+    if (countEl) countEl.textContent = "加载失败";
+    if (listEl) listEl.innerHTML = `<div class="download-records-error">加载失败: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closeDownloadRecordsModal() {
+  const modal = document.getElementById("downloadRecordsModal");
+  if (modal) modal.style.display = "none";
+}
+
+async function clearDownloadRecords() {
+  if (!confirm("确定清空所有下载记录？此操作不可撤销。")) return;
+
+  try {
+    const resp = await fetch(`${API_ROOT}/api/downloads/records`, { method: "DELETE" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const countEl = document.getElementById("download-records-count");
+    const listEl = document.getElementById("download-records-list");
+    const paginationEl = document.getElementById("download-records-pagination");
+    if (countEl) countEl.textContent = "已清空";
+    if (listEl) listEl.innerHTML = '<div class="download-records-empty"><div><i class="fa-regular fa-clock"></i><br>暂无下载记录</div></div>';
+    if (paginationEl) paginationEl.innerHTML = "";
+    activeDownloadRecordsPage = 1;
+  } catch (err) {
+    alert("清空失败: " + err.message);
+  }
+}
+
+const PLAYBACK_HISTORY_STORAGE_KEY = "musicdl:playback-history";
+const PLAYBACK_HISTORY_LIMIT = 100;
+const PLAYBACK_HISTORY_PAGE_SIZE = 10;
+let activePlaybackHistoryEntries = [];
+let activePlaybackHistoryPage = 1;
+let lastPlaybackHistoryKey = "";
+let lastPlaybackHistoryAt = 0;
+
+function readPlaybackHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLAYBACK_HISTORY_STORAGE_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry) => entry && entry.name && entry.source && entry.id)
+      .slice(0, PLAYBACK_HISTORY_LIMIT);
+  } catch (_) {
+    return [];
+  }
+}
+
+function writePlaybackHistory(entries) {
+  try {
+    localStorage.setItem(
+      PLAYBACK_HISTORY_STORAGE_KEY,
+      JSON.stringify(entries.slice(0, PLAYBACK_HISTORY_LIMIT)),
+    );
+  } catch (_) {
+    // 本地存储不可用时，播放本身不受影响。
+  }
+}
+
+function playbackHistoryKey(entry) {
+  return `${entry.source}\u0000${entry.id}`;
+}
+
+function rememberPlaybackHistory(audio) {
+  const id = String(getPlaybackCardID(audio) || "").trim();
+  const source = String(audio?.source || "").trim();
+  const name = String(audio?.name || "").trim();
+  if (!id || !source || !name) return;
+
+  const now = Date.now();
+  const entry = {
+    id,
+    source,
+    name,
+    artist: String(audio?.artist || "").trim(),
+    album: String(audio?.album || "").trim(),
+    cover: String(audio?.cover || "").trim(),
+    duration: Number(audio?.duration || 0) || 0,
+    extra: typeof audio?.extra === "string" ? audio.extra : serializeSongExtra(audio?.extra),
+    playedAt: now,
+  };
+  const key = playbackHistoryKey(entry);
+  if (key === lastPlaybackHistoryKey && now - lastPlaybackHistoryAt < 10_000) {
+    return;
+  }
+  lastPlaybackHistoryKey = key;
+  lastPlaybackHistoryAt = now;
+
+  const records = readPlaybackHistory().filter(
+    (item) => playbackHistoryKey(item) !== key,
+  );
+  records.unshift(entry);
+  writePlaybackHistory(records);
+}
+
+function formatPlaybackHistoryTime(value) {
+  const date = new Date(Number(value || 0));
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString();
+}
+
+function renderPlaybackHistory(page = activePlaybackHistoryPage) {
+  const countEl = document.getElementById("playback-history-count");
+  const listEl = document.getElementById("playback-history-list");
+  const paginationEl = document.getElementById("playback-history-pagination");
+  if (!listEl) return;
+
+  activePlaybackHistoryEntries = readPlaybackHistory();
+  const total = activePlaybackHistoryEntries.length;
+  const totalPages = Math.max(1, Math.ceil(total / PLAYBACK_HISTORY_PAGE_SIZE));
+  activePlaybackHistoryPage = Math.min(
+    Math.max(1, parsePositiveInt(page, 1)),
+    totalPages,
+  );
+  if (countEl) {
+    countEl.textContent = total
+      ? `最近播放 ${total} 首`
+      : "暂无播放记录";
+  }
+
+  if (total === 0) {
+    listEl.innerHTML = '<div class="utility-empty-state"><div><i class="fa-regular fa-clock"></i><br>开始播放歌曲后，记录会显示在这里</div></div>';
+    if (paginationEl) paginationEl.innerHTML = "";
+    return;
+  }
+
+  const offset = (activePlaybackHistoryPage - 1) * PLAYBACK_HISTORY_PAGE_SIZE;
+  const currentEntries = activePlaybackHistoryEntries.slice(
+    offset,
+    offset + PLAYBACK_HISTORY_PAGE_SIZE,
+  );
+  listEl.innerHTML = currentEntries
+    .map((entry, index) => {
+      const cover = entry.cover
+        ? `<img src="${escapeHTML(entry.cover)}" alt="">`
+        : '<i class="fa-solid fa-music"></i>';
+      const artist = escapeHTML(entry.artist || "未知歌手");
+      return `<div class="playback-history-item">
+        <div class="playback-history-cover">${cover}</div>
+        <div class="playback-history-main">
+          <div class="playback-history-name">${escapeHTML(entry.name)}</div>
+          <div class="playback-history-meta">${artist}</div>
+          <div class="playback-history-time">${escapeHTML(formatPlaybackHistoryTime(entry.playedAt))}</div>
+        </div>
+        <button type="button" class="playback-history-play" onclick="playPlaybackHistoryItem(${offset + index})"><i class="fa-solid fa-play"></i> 播放</button>
+      </div>`;
+    })
+    .join("");
+  if (paginationEl) {
+    paginationEl.innerHTML = renderUtilityModalPagination(
+      activePlaybackHistoryPage,
+      totalPages,
+      "renderPlaybackHistory",
+    );
+  }
+}
+
+function openPlaybackHistoryModal() {
+  const modal = document.getElementById("playbackHistoryModal");
+  if (!modal) return;
+  renderPlaybackHistory(1);
+  modal.style.display = "flex";
+}
+
+function closePlaybackHistoryModal() {
+  const modal = document.getElementById("playbackHistoryModal");
+  if (modal) modal.style.display = "none";
+}
+
+function clearPlaybackHistory() {
+  if (!confirm("确定清空播放历史？")) return;
+  try {
+    localStorage.removeItem(PLAYBACK_HISTORY_STORAGE_KEY);
+  } catch (_) {}
+  activePlaybackHistoryEntries = [];
+  activePlaybackHistoryPage = 1;
+  renderPlaybackHistory(1);
+}
+
+function playPlaybackHistoryItem(index) {
+  const entry = activePlaybackHistoryEntries[index];
+  if (!entry || !ap?.list) return;
+
+  const song = {
+    id: entry.id,
+    source: entry.source,
+    name: entry.name,
+    artist: entry.artist || "",
+    album: entry.album || "",
+    cover: entry.cover || "",
+    duration: Number(entry.duration || 0) || 0,
+    extra: entry.extra || "",
+  };
+  const lyricURLs = lyricURLsForPlayback(song);
+  ap.list.clear();
+  ap.list.add([{
+    name: song.name,
+    artist: song.artist,
+    album: song.album,
+    url: buildStreamURL(song.id, song.source, song.name, song.artist, song.album, song.cover, song.extra),
+    cover: song.cover,
+    lrc: lyricURLs.line,
+    raw_lrc: lyricURLs.auto,
+    theme: "#10b981",
+    custom_id: song.id,
+    source: song.source,
+    duration: song.duration,
+    extra: song.extra,
+  }]);
+  ap.play();
+  closePlaybackHistoryModal();
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// 选择下载目录文件夹
+async function pickDownloadFolder() {
+  try {
+    if (!window.showDirectoryPicker) {
+      // 降级：让用户手动选择预设或输入路径
+      document.getElementById("setting-download-dir-preset").value = "__custom__";
+      document.getElementById("setting-download-dir").focus();
+      return;
+    }
+    const dirHandle = await window.showDirectoryPicker();
+    const path = dirHandle.name;
+    // showDirectoryPicker 不暴露完整路径，用名称回填让用户补全
+    // 但大多数情况下用户知道自己的目录结构
+    const input = document.getElementById("setting-download-dir");
+    input.value = input.value || path;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      console.warn("文件夹选择器不可用:", err);
+    }
+  }
+}
+
 function proxiedGithubURL(rawURL, proxyURL, enabled) {
   if (!enabled || !rawURL || !rawURL.startsWith("https://github.com/")) {
     return rawURL;
@@ -3365,17 +3821,157 @@ async function saveCookies() {
 }
 
 window.addEventListener("scroll", () => {
-  const btn = document.getElementById("back-to-top");
-  if (!btn) return;
-  if (window.scrollY > 300) {
-    btn.classList.add("show");
-  } else {
-    btn.classList.remove("show");
+  const topBtn = document.getElementById("back-to-top");
+  const bottomBtn = document.getElementById("back-to-bottom");
+  if (topBtn) {
+    if (window.scrollY > 300) {
+      topBtn.classList.add("show");
+    } else {
+      topBtn.classList.remove("show");
+    }
+  }
+  if (bottomBtn) {
+    if (window.scrollY > 300) {
+      bottomBtn.classList.add("show");
+    } else {
+      bottomBtn.classList.remove("show");
+    }
   }
 });
 
 function scrollToTop() {
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function scrollToBottom() {
+  window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+}
+
+// ==========================================
+// 浮动翻页键
+// ==========================================
+
+function updateFloatPageNav() {
+  const numEl = document.getElementById("float-page-num");
+  if (!numEl) return;
+
+  // 本地音乐页
+  if (isLocalMusicPageActive()) {
+    const bar = document.getElementById("localMusicPagePagination");
+    if (!bar) {
+      setFloatPageNumber(numEl, 1);
+      return;
+    }
+    const cur = parseInt(bar.dataset.currentPage, 10);
+    if (Number.isFinite(cur)) setFloatPageNumber(numEl, cur);
+    return;
+  }
+
+  const { current } = getRenderedSearchPageInfo();
+  setFloatPageNumber(numEl, current);
+}
+
+function setFloatPageNumber(element, page) {
+  if (element.tagName === "INPUT") {
+    element.value = String(page);
+  } else {
+    element.textContent = String(page);
+  }
+}
+
+function getRenderedSearchPageInfo() {
+  const fallback = parseInt(new URLSearchParams(window.location.search).get("page"), 10) || 1;
+  const summary = document.querySelector(".page-summary");
+  const match = summary ? summary.textContent.match(/(\d+)\s*\/\s*(\d+)/) : null;
+  if (!match) return { current: fallback, total: null };
+  return {
+    current: parseInt(match[1], 10) || fallback,
+    total: parseInt(match[2], 10) || null,
+  };
+}
+
+function floatPageUp() {
+  if (isLocalMusicPageActive()) {
+    const bar = document.getElementById("localMusicPagePagination");
+    if (!bar) return;
+    const cur = parseInt(bar.dataset.currentPage, 10);
+    if (cur > 1) goToPage(cur - 1);
+  } else {
+    const { current } = getRenderedSearchPageInfo();
+    if (current > 1) goToPage(current - 1);
+  }
+}
+
+function floatPageDown() {
+  if (isLocalMusicPageActive()) {
+    const bar = document.getElementById("localMusicPagePagination");
+    if (!bar) return;
+    const cur = parseInt(bar.dataset.currentPage, 10);
+    const total = parseInt(bar.dataset.totalPages, 10);
+    if (cur < total) goToPage(cur + 1);
+  } else {
+    const { current, total } = getRenderedSearchPageInfo();
+    if (total && current < total) goToPage(current + 1);
+  }
+}
+
+// 点击页数 → 输入框 → Enter/blur 跳转
+function floatPageNumClick() {
+  const numEl = document.getElementById("float-page-num");
+  if (!numEl) return;
+  if (isLocalMusicPageActive()) {
+    if (!document.getElementById("localMusicPagePagination")) return;
+  } else if (!getRenderedSearchPageInfo().total) {
+    return;
+  }
+  const currentVal = numEl.textContent.trim();
+  // 如果已经是输入框则忽略
+  if (numEl.tagName === "INPUT") return;
+
+  const input = document.createElement("input");
+  input.type = "number";
+  input.min = "1";
+  input.value = currentVal;
+  input.className = numEl.className;
+  input.id = numEl.id;
+  input.style.width = "40px";
+  input.style.height = "28px";
+  input.style.textAlign = "center";
+  input.style.fontSize = "13px";
+  input.style.fontWeight = "700";
+  input.style.color = "#10b981";
+  input.style.border = "2px solid #10b981";
+  input.style.borderRadius = "6px";
+  input.style.outline = "none";
+  input.style.background = "white";
+
+  let submitted = false;
+  const restore = () => {
+    if (input.parentNode) input.parentNode.replaceChild(numEl, input);
+  };
+  const jump = () => {
+    if (submitted) return;
+    submitted = true;
+    const val = parseInt(input.value, 10);
+    restore();
+    if (Number.isFinite(val) && val > 0) goToPage(val);
+  };
+
+  input.onkeydown = function(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      jump();
+    }
+    if (e.key === "Escape") {
+      submitted = true;
+      restore();
+    }
+  };
+  input.onblur = jump;
+
+  numEl.parentNode.replaceChild(input, numEl);
+  input.focus();
+  input.select();
 }
 
 let defaultDocumentTitle = document.title;
@@ -4144,6 +4740,11 @@ const KaraokeLyrics = (() => {
       if (!response.ok) return;
       const raw = await response.text();
       if (key !== currentKey) return;
+      if (!floatingLyricsEnabled()) {
+        currentKey = "";
+        hide();
+        return;
+      }
       const parsed = parse(raw);
       if (parsed.type !== "karaoke") {
         hide();
@@ -4397,6 +4998,7 @@ ap.on("listswitch", (e) => {
 ap.on("play", () => {
   const idx = ap?.list?.index;
   const audio = typeof idx === "number" ? ap.list.audios[idx] : null;
+  rememberPlaybackHistory(audio);
   const playbackCardID = getPlaybackCardID(audio);
   if (playbackCardID) {
     currentPlayingId = playbackCardID;
@@ -5202,11 +5804,13 @@ function toggleBatchMode() {
 
   if (isBatchMode) {
     btn.innerHTML = '<i class="fa-solid fa-xmark"></i> 退出批量';
-    btn.style.color = "var(--error-color)";
+    btn.classList.add("is-active");
+    btn.setAttribute("aria-pressed", "true");
     toolbar.classList.add("active");
   } else {
     btn.innerHTML = '<i class="fa-solid fa-list-check"></i> 批量操作';
-    btn.style.color = "var(--text-sub)";
+    btn.classList.remove("is-active");
+    btn.setAttribute("aria-pressed", "false");
     toolbar.classList.remove("active");
     document
       .querySelectorAll(".song-checkbox")
@@ -5330,15 +5934,7 @@ async function batchDownload() {
   const batchSwitch = document.getElementById("btn-batch-switch");
   const originalBatchDlHTML = batchDl ? batchDl.innerHTML : "";
 
-  const skipText =
-    skippedLocalCount > 0 ? `\n已跳过 ${skippedLocalCount} 首本地歌曲。` : "";
-  if (
-    !confirm(
-      `准备将 ${songs.length} 首歌曲保存到本地目录:\n${webSettings.downloadDir}${skipText}`,
-    )
-  ) {
-    return;
-  }
+  if (!confirm(`确认批量下载 ${songs.length} 首歌曲？`)) return;
 
   if (batchDl) {
     batchDl.disabled = true;
@@ -5348,43 +5944,58 @@ async function batchDownload() {
     batchSwitch.disabled = true;
   }
 
+  setDownloadRecordsButtonState("downloading");
+  const ignoredLocalText =
+    skippedLocalCount > 0 ? `，已忽略 ${skippedLocalCount} 首本地歌曲` : "";
+  const dismissBatchStartNotice = showToast(
+    "批量下载已开始",
+    `正在保存 ${songs.length} 首歌曲${ignoredLocalText}，进度与结果请查看右侧“下载记录”。`,
+    "info",
+    BATCH_DOWNLOAD_NOTICE_MS,
+  );
+
   let success = 0;
+  let skipped = 0;
+  let failed = 0;
   let warningCount = 0;
-  const failures = [];
 
   try {
     for (const song of songs) {
       try {
         const result = await requestLocalDownload(song.url);
-        success++;
-        if (result && result.warning) {
-          warningCount++;
+        if (result && result.skipped) {
+          skipped++;
+        } else {
+          success++;
+          if (result && result.warning) {
+            warningCount++;
+          }
         }
-      } catch (error) {
-        failures.push({
-          song,
-          reason: error && error.message ? error.message : "下载失败",
-        });
+      } catch (_) {
+        failed++;
       }
     }
 
-    let message = `本地保存完成，成功 ${success}/${songs.length}`;
-
+    const summary = [`成功 ${success}`, `跳过 ${skipped}`, `失败 ${failed}`];
     if (skippedLocalCount > 0) {
-      message += `\n已跳过 ${skippedLocalCount} 首本地歌曲。`;
+      summary.push(`忽略本地 ${skippedLocalCount}`);
     }
-    message += `\n目录：${webSettings.downloadDir}`;
     if (warningCount > 0) {
-      message += `\n\n共 ${warningCount} 首触发了降级提示，请查看终端日志`;
+      summary.push(`降级提示 ${warningCount}`);
     }
-    message += buildBatchFailureMessage(failures, "失败");
 
+    dismissBatchStartNotice(true);
     showToast(
-      failures.length > 0 ? "下载部分完成" : "下载完成",
-      message,
-      failures.length > 0 ? "warning" : "success",
-      8000,
+      failed > 0 ? "批量下载部分完成" : "批量下载完成",
+      `${summary.join("，")}。详情请查看右侧“下载记录”。`,
+      failed > 0 ? "warning" : "success",
+      BATCH_DOWNLOAD_NOTICE_MS,
     );
+
+    setDownloadRecordsButtonState("updated");
+    if (await refreshOpenDownloadRecords()) {
+      setDownloadRecordsButtonState("idle");
+    }
   } finally {
     if (batchDl) {
       batchDl.innerHTML = originalBatchDlHTML;
@@ -5656,9 +6267,6 @@ function localMusicElements() {
     list: document.getElementById("localMusicList"),
     hint: document.getElementById("localMusicHint"),
     dir: document.getElementById("localMusicDir"),
-    targetWrap: document.getElementById("localMusicTargetWrap"),
-    targetSelect: document.getElementById("localMusicCollectionSelect"),
-    input: document.getElementById("localMusicUploadInput"),
   };
 }
 
@@ -5672,22 +6280,14 @@ function setLocalMusicHint(message, isError = false) {
 
 async function openLocalMusicModal(collectionId = "") {
   activeLocalMusicCollectionId = String(collectionId || "").trim();
-  const { modal, list, dir, targetWrap } = localMusicElements();
+  const { modal, list, dir } = localMusicElements();
   if (!modal) return;
 
+  closeDownloadRecordsModal();
   if (list) list.innerHTML = "";
   if (dir) dir.textContent = `下载目录：${webSettings.downloadDir || "-"}`;
   setLocalMusicHint("正在加载本地音乐...");
   modal.style.display = "flex";
-
-  if (activeLocalMusicCollectionId) {
-    if (targetWrap) targetWrap.style.display = "none";
-  } else {
-    if (targetWrap) targetWrap.style.display = "block";
-    const loaded = await loadLocalMusicCollections();
-    if (!loaded) return;
-  }
-
   refreshLocalMusicList();
 }
 
@@ -5696,61 +6296,9 @@ function closeLocalMusicModal() {
   if (modal) modal.style.display = "none";
 }
 
-async function loadLocalMusicCollections() {
-  const { targetSelect, list } = localMusicElements();
-  if (!targetSelect) return false;
-
-  try {
-    const response = await fetch(API_ROOT + "/collections");
-    const collections = await response.json().catch(() => []);
-    if (!response.ok || !Array.isArray(collections)) {
-      throw new Error("歌单列表加载失败");
-    }
-
-    targetSelect.innerHTML = "";
-    collections.forEach((col) => {
-      const option = document.createElement("option");
-      option.value = String(col.id || "");
-      option.textContent = col.name || `歌单 ${col.id}`;
-      targetSelect.appendChild(option);
-    });
-
-    if (collections.length === 0) {
-      activeLocalMusicCollectionId = "";
-      if (list) list.innerHTML = "";
-      setLocalMusicHint("请先新建一个自制歌单，再添加本地音乐。");
-      return false;
-    }
-
-    activeLocalMusicCollectionId = String(collections[0].id || "");
-    targetSelect.value = activeLocalMusicCollectionId;
-    return true;
-  } catch (error) {
-    activeLocalMusicCollectionId = "";
-    if (list) list.innerHTML = "";
-    setLocalMusicHint(error.message || "歌单列表加载失败", true);
-    return false;
-  }
-}
-
-function selectLocalMusicCollection(collectionId) {
-  activeLocalMusicCollectionId = String(collectionId || "").trim();
-  if (!activeLocalMusicCollectionId) {
-    setLocalMusicHint("请选择一个目标歌单。");
-    return;
-  }
-  setLocalMusicHint("正在加载本地音乐...");
-  refreshLocalMusicList();
-}
-
 async function refreshLocalMusicList(options = {}) {
   const { list, dir } = localMusicElements();
   if (!list) return;
-  if (!activeLocalMusicCollectionId) {
-    list.innerHTML = "";
-    setLocalMusicHint("请选择一个目标歌单。");
-    return;
-  }
   if (localMusicModalState.loading) return;
 
   const append = !!options.append;
@@ -5761,10 +6309,12 @@ async function refreshLocalMusicList(options = {}) {
   }
 
   const params = new URLSearchParams({
-    collection_id: activeLocalMusicCollectionId,
     offset: String(localMusicModalState.offset),
     limit: String(localMusicModalState.limit),
   });
+  if (activeLocalMusicCollectionId) {
+    params.set("collection_id", activeLocalMusicCollectionId);
+  }
   try {
     localMusicModalState.loading = true;
     const response = await fetch(
@@ -5833,6 +6383,7 @@ function renderLocalMusicList(payload, append = false) {
     const sizeText = track.size_text || "-";
     const missingText = localMusicMissingText(track);
 
+    const canAddToCollection = !!activeLocalMusicCollectionId;
     item.innerHTML = `
             <div class="local-music-cover"><i class="fa-solid fa-music"></i></div>
             <div class="local-music-main">
@@ -5849,13 +6400,13 @@ function renderLocalMusicList(payload, append = false) {
                     ${escapeHTML(track.rel_path || track.filename || "")}
                 </div>
             </div>
-            <button type="button" class="btn-pill btn-pill-primary local-music-add ${track.already_added ? "is-added" : ""}" ${track.already_added ? "disabled" : ""}>
+            ${canAddToCollection ? `<button type="button" class="btn-pill btn-pill-primary local-music-add ${track.already_added ? "is-added" : ""}" ${track.already_added ? "disabled" : ""}>
                 <i class="fa-solid ${track.already_added ? "fa-check" : "fa-plus"}"></i> ${track.already_added ? "已添加" : "添加"}
-            </button>
+            </button>` : ""}
         `;
 
     const btn = item.querySelector(".local-music-add");
-    if (btn && !track.already_added) {
+    if (canAddToCollection && btn && !track.already_added) {
       btn.onclick = () => addLocalMusicToCollection(track.id, btn);
     }
     list.appendChild(item);
@@ -5876,51 +6427,63 @@ function renderLocalMusicList(payload, append = false) {
   }
 }
 
+function setLocalMusicUploadHint(message, isError = false) {
+  if (isLocalMusicPageActive()) {
+    setLocalMusicPageHint(message, isError);
+    return;
+  }
+  setLocalMusicHint(message, isError);
+}
+
 async function uploadLocalMusicFile(input) {
   if (!input || !input.files || input.files.length === 0) return;
 
-  const file = input.files[0];
-  const formData = new FormData();
-  formData.append("file", file);
-  setLocalMusicHint(`正在上传：${file.name}`);
-
-  try {
-    const response = await fetch(`${API_ROOT}/local_music/upload`, {
-      method: "POST",
-      body: formData,
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.error) {
-      throw new Error((payload && payload.error) || "上传失败");
-    }
+  const acceptedExtensions = new Set(["mp3", "flac", "m4a", "ogg", "wav", "wma", "aac"]);
+  const files = Array.from(input.files).filter((file) => {
+    const extension = file.name.split(".").pop().toLowerCase();
+    return acceptedExtensions.has(extension);
+  });
+  const ignoredCount = input.files.length - files.length;
+  if (files.length === 0) {
     input.value = "";
-    await refreshLocalMusicList();
-  } catch (error) {
-    setLocalMusicHint(error.message || "上传失败", true);
+    setLocalMusicUploadHint("所选内容中没有可导入的音频文件。", true);
+    return;
   }
-}
 
-async function uploadLocalMusicForPage(input) {
-  if (!input || !input.files || input.files.length === 0) return;
-
-  const file = input.files[0];
-  const formData = new FormData();
-  formData.append("file", file);
-
+  const failures = [];
+  let imported = 0;
   try {
-    const response = await fetch(`${API_ROOT}/local_music/upload`, {
-      method: "POST",
-      body: formData,
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.error) {
-      throw new Error((payload && payload.error) || "上传失败");
+    for (const [index, file] of files.entries()) {
+      setLocalMusicUploadHint(`正在导入 ${index + 1} / ${files.length}：${file.webkitRelativePath || file.name}`);
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const response = await fetch(`${API_ROOT}/local_music/upload`, {
+          method: "POST",
+          body: formData,
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.error) {
+          throw new Error((payload && payload.error) || "导入失败");
+        }
+        imported++;
+      } catch (error) {
+        failures.push(`${file.name}：${error.message || "导入失败"}`);
+      }
     }
+
+    if (isLocalMusicPageActive()) {
+      await refreshLocalMusicPageAfterMutation();
+    }
+    const ignoredText = ignoredCount > 0 ? `，忽略 ${ignoredCount} 个非音频文件` : "";
+    if (failures.length > 0) {
+      setLocalMusicUploadHint(`已导入 ${imported} 首${ignoredText}，${failures.length} 首失败：${failures[0]}`, true);
+    } else {
+      setLocalMusicUploadHint(`已导入 ${imported} 首${ignoredText}。`);
+    }
+  } finally {
     input.value = "";
-    await refreshCurrentPageContent({ scroll: false });
-  } catch (error) {
-    input.value = "";
-    alert(error.message || "上传失败");
   }
 }
 
@@ -6073,6 +6636,7 @@ function openCollectionManager() {
 }
 
 function openLocalMusicPage() {
+  closeDownloadRecordsModal();
   navigateTo(API_ROOT + "/local_music_page");
 }
 

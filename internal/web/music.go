@@ -349,7 +349,7 @@ func playlistCategoryPlaylistsURL(source string, category model.PlaylistCategory
 	return RoutePrefix + "/category_playlists?" + values.Encode()
 }
 
-func RegisterMusicRoutes(api *gin.RouterGroup) {
+func RegisterMusicRoutes(api, configAPI *gin.RouterGroup) {
 
 	api.GET("/", func(c *gin.Context) {
 		renderIndex(c, nil, nil, "", nil, "", "song", "", "", "", false, "", nil)
@@ -829,7 +829,10 @@ func RegisterMusicRoutes(api *gin.RouterGroup) {
 		tempSong := &model.Song{ID: id, Source: source, Name: name, Artist: artist, Album: album, Cover: coverURL, Extra: extra}
 
 		if saveLocal {
-			result, err := core.SaveSongToFileWithTemplate(tempSong, settings.DownloadDir, embedMeta, embedMeta, settings.DownloadFilenameTemplate)
+			// 加载 SQLite 去重集合。
+			allSongsSet, _ := core.LoadDownloadDedupSet()
+
+			result, err := core.DownloadWithDedupCheckWithTemplate(tempSong, settings.DownloadDir, embedMeta, embedMeta, settings.DownloadFilenameTemplate, allSongsSet)
 			if err != nil {
 				c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 				return
@@ -840,6 +843,7 @@ func RegisterMusicRoutes(api *gin.RouterGroup) {
 				"saved":    true,
 				"path":     result.SavedPath,
 				"filename": result.Filename,
+				"skipped":  result.Skipped,
 			}
 			if result.Warning != "" {
 				payload["warning"] = result.Warning
@@ -1093,6 +1097,98 @@ func RegisterMusicRoutes(api *gin.RouterGroup) {
 		}
 		c.String(200, "[00:00.00] 纯音乐 / 无歌词")
 	})
+
+	// 下载记录 API
+	api.GET("/api/downloads/records", func(c *gin.Context) {
+		page, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page", "1")))
+		pageSize, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("page_size", "20")))
+		if page < 1 {
+			page = 1
+		}
+		if pageSize < 1 {
+			pageSize = 20
+		}
+		if pageSize > 100 {
+			pageSize = 100
+		}
+
+		records, total, err := core.GetDownloadRecordPage(page, pageSize)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		totalPages := 1
+		if total > 0 {
+			totalPages = int((total + int64(pageSize) - 1) / int64(pageSize))
+		}
+		if page > totalPages {
+			page = totalPages
+			records, total, err = core.GetDownloadRecordPage(page, pageSize)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		if records == nil {
+			records = []core.DownloadRecord{}
+		}
+		c.JSON(200, gin.H{
+			"records":     records,
+			"page":        page,
+			"page_size":   pageSize,
+			"total":       total,
+			"total_pages": totalPages,
+		})
+	})
+
+	configAPI.DELETE("/api/downloads/records", func(c *gin.Context) {
+		if err := core.ClearDownloadRecords(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
+	// 下载预检：统计待下载队列中有多少首将跳过
+	api.POST("/api/downloads/precheck", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 20<<20) // 20MB
+		var req struct {
+			Songs []struct {
+				Name   string `json:"name"`
+				Artist string `json:"artist"`
+			} `json:"songs"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误"})
+			return
+		}
+		if len(req.Songs) > 20000 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "歌曲数量不能超过 20000"})
+			return
+		}
+		for _, s := range req.Songs {
+			if len(s.Name) > 500 || len(s.Artist) > 500 {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "歌曲名或歌手名长度不能超过 500 字符"})
+				return
+			}
+		}
+
+		dedupSet, err := core.LoadDownloadDedupSet()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		skipCount := 0
+		for _, s := range req.Songs {
+			song := &model.Song{Name: s.Name, Artist: s.Artist}
+			if core.IsSongDownloaded(song, dedupSet) {
+				skipCount++
+			}
+		}
+		c.JSON(200, gin.H{"total": len(req.Songs), "skipped": skipCount})
+	})
+
 }
 
 func saveWebAssetResponse(c *gin.Context, filename string, data []byte) {

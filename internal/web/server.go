@@ -22,7 +22,10 @@ import (
 //go:embed templates/*
 var templateFS embed.FS
 
-const RoutePrefix = "/music"
+// DefaultRoutePrefix is the web UI base path used when no base path is configured.
+const DefaultRoutePrefix = "/music"
+
+var RoutePrefix = DefaultRoutePrefix
 
 type importCollectionMeta struct {
 	Enabled     bool
@@ -246,8 +249,8 @@ func renderIndex(c *gin.Context, songs []model.Song, playlists []model.Playlist,
 			pageSize = n
 		}
 	}
-	if pageSize > 200 {
-		pageSize = 200
+	if pageSize > 500 {
+		pageSize = 500
 	}
 
 	page := 1
@@ -293,7 +296,6 @@ func renderIndex(c *gin.Context, songs []model.Song, playlists []model.Playlist,
 	if totalCount > 0 {
 		pageStartDisplay = pageStart + 1
 	}
-
 	c.HTML(200, "index.html", gin.H{
 		"Result":                  songs,
 		"Playlists":               playlists,
@@ -332,14 +334,27 @@ func renderIndex(c *gin.Context, songs []model.Song, playlists []model.Playlist,
 	})
 }
 
+func NormalizeBasePath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimRight(p, "/")
+	if p == "" {
+		return DefaultRoutePrefix
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return p
+}
+
 type StartOptions struct {
 	ShouldOpenBrowser bool
 	DisableAuth       bool
 	ListenHost        string
+	BasePath          string
 }
 
-func Start(port string, shouldOpenBrowser bool) {
-	StartWithOptions(port, StartOptions{ShouldOpenBrowser: shouldOpenBrowser})
+func Start(port string, shouldOpenBrowser bool, basePath string) {
+	StartWithOptions(port, StartOptions{ShouldOpenBrowser: shouldOpenBrowser, BasePath: basePath})
 }
 
 func StartDesktop(port string) {
@@ -350,6 +365,7 @@ func StartDesktop(port string) {
 }
 
 func StartWithOptions(port string, opts StartOptions) {
+	RoutePrefix = NormalizeBasePath(opts.BasePath)
 	core.CM.Load()
 	if !opts.DisableAuth {
 		settings, err := core.GetWebAuthSettings()
@@ -448,7 +464,7 @@ func StartWithOptions(port string, opts StartOptions) {
 		c.JSON(200, core.GetWebSettings())
 	})
 
-	RegisterMusicRoutes(api)
+	RegisterMusicRoutes(api, configAPI)
 	RegisterQRLoginRoutes(configAPI)
 	RegisterCollectionRoutes(api)
 	RegisterLocalMusicRoutes(api)

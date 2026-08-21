@@ -101,9 +101,6 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	if defaults.WebPageSize != DefaultWebPageSize {
 		t.Fatalf("default WebPageSize mismatch: got %d want %d", defaults.WebPageSize, DefaultWebPageSize)
 	}
-	if defaults.WebPageSize != 30 {
-		t.Fatalf("default WebPageSize should be 30: got %d", defaults.WebPageSize)
-	}
 	if defaults.CliPageSize != DefaultCLIPageSize {
 		t.Fatalf("default CliPageSize mismatch: got %d want %d", defaults.CliPageSize, DefaultCLIPageSize)
 	}
@@ -119,8 +116,8 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	if !defaults.AutoSwitchInvalidSources {
 		t.Fatalf("default AutoSwitchInvalidSources should be true")
 	}
-	if !defaults.AutoCacheOnPlay {
-		t.Fatalf("default AutoCacheOnPlay should be true")
+	if defaults.AutoCacheOnPlay {
+		t.Fatalf("default AutoCacheOnPlay should be false")
 	}
 	if defaults.UpdateRepoURL != DefaultUpdateRepoURL {
 		t.Fatalf("default UpdateRepoURL mismatch: got %q want %q", defaults.UpdateRepoURL, DefaultUpdateRepoURL)
@@ -155,7 +152,7 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 		DownloadConcurrency:      5,
 		AutoCheckUpdate:          false,
 		AutoSwitchInvalidSources: false,
-		AutoCacheOnPlay:          false,
+		AutoCacheOnPlay:          true,
 		UpdateRepoURL:            "https://github.com/example/fork",
 		GithubProxyEnabled:       true,
 		GithubProxyURL:           "https://gh-proxy.com/",
@@ -179,7 +176,7 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 		DownloadConcurrency:      5,
 		AutoCheckUpdate:          false,
 		AutoSwitchInvalidSources: false,
-		AutoCacheOnPlay:          false,
+		AutoCacheOnPlay:          true,
 		UpdateRepoURL:            "https://github.com/example/fork",
 		GithubProxyEnabled:       true,
 		GithubProxyURL:           "https://gh-proxy.com/",
@@ -253,7 +250,7 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	}
 }
 
-func TestWebSettingsLegacyPayloadDefaultsEnabledSwitches(t *testing.T) {
+func TestWebSettingsLegacyPayloadUsesCurrentSwitchDefaults(t *testing.T) {
 	baseDir := t.TempDir()
 	t.Setenv("MUSIC_DL_CONFIG_DB", filepath.Join(baseDir, "data", "settings.db"))
 	t.Setenv("MUSIC_DL_COOKIE_FILE", filepath.Join(baseDir, "data", "cookies.json"))
@@ -279,8 +276,8 @@ func TestWebSettingsLegacyPayloadDefaultsEnabledSwitches(t *testing.T) {
 	if !got.AutoSwitchInvalidSources {
 		t.Fatalf("legacy settings should default AutoSwitchInvalidSources to true: %#v", got)
 	}
-	if !got.AutoCacheOnPlay {
-		t.Fatalf("legacy settings should default AutoCacheOnPlay to true: %#v", got)
+	if got.AutoCacheOnPlay {
+		t.Fatalf("legacy settings should default AutoCacheOnPlay to false: %#v", got)
 	}
 }
 

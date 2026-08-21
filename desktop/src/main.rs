@@ -209,6 +209,9 @@ fn start_backend(
         .arg(server_config::PORT)
         .current_dir(app_data_dir);
 
+    // Use the verified writable data directory for every backend-owned file.
+    cmd.env("MUSIC_DL_DATA_DIR", app_data_dir);
+
     if let Some(file) = log_file {
         if let Ok(stdout) = file.try_clone() {
             cmd.stdout(Stdio::from(stdout));
@@ -462,6 +465,17 @@ fn html_escape(value: &str) -> String {
 }
 
 fn resolve_app_data_dir() -> PathBuf {
+    // 优先：exe 所在目录（便携式，所有数据与 exe 同目录）
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.to_path_buf();
+            // 验证目录可写（尝试创建临时文件）
+            if candidate.is_dir() && is_dir_writable(&candidate) {
+                return candidate;
+            }
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
         if let Some(base) = env::var_os("LOCALAPPDATA") {
@@ -490,6 +504,19 @@ fn resolve_app_data_dir() -> PathBuf {
     }
 
     env::temp_dir().join("go-music-dl")
+}
+
+/// 验证目录可写：尝试创建并删除一个临时文件。
+fn is_dir_writable(dir: &Path) -> bool {
+    let test_path = dir.join(".writable_test");
+    match std::fs::File::create(&test_path) {
+        Ok(f) => {
+            drop(f);
+            let _ = std::fs::remove_file(&test_path);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn prepare_app_data_dir() -> io::Result<PathBuf> {

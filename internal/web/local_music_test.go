@@ -35,7 +35,7 @@ func newLocalMusicTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	group := r.Group(RoutePrefix)
-	RegisterMusicRoutes(group)
+	RegisterMusicRoutes(group, group)
 	RegisterCollectionRoutes(group)
 	RegisterLocalMusicRoutes(group)
 	return r
@@ -272,10 +272,20 @@ func TestLocalMusicPageRendersSongListWithoutUnsupportedActions(t *testing.T) {
 
 	body := rec.Body.String()
 	required := []string{
-		`id="localMusicPageUploadInput"`,
 		`id="localMusicPageList"`,
 		`data-local-music-page="true"`,
-		`onchange="uploadLocalMusicForPage(this)"`,
+		`class="local-music-upload-actions"`,
+		`class="ctrl-btn local-music-upload-button is-file"`,
+		`class="ctrl-btn local-music-upload-button is-folder"`,
+		`id="song-list-tools-popover"`,
+		`重复检测`,
+		`播放全部`,
+		`批量操作`,
+		`id="localMusicPageFileInput"`,
+		`id="localMusicPageFolderInput"`,
+		`webkitdirectory directory`,
+		`onchange="uploadLocalMusicFile(this)"`,
+		`上传文件夹`,
 		`id="btn-batch-delete-local"`,
 		`onclick="batchDeleteLocalMusic()"`,
 		`data-source="local"`,
@@ -297,6 +307,7 @@ func TestLocalMusicPageRendersSongListWithoutUnsupportedActions(t *testing.T) {
 	}
 
 	forbidden := []string{
+		`onclick="openLocalMusicModal()"`,
 		`class="btn-circle btn-switch"`,
 		`class="btn-circle btn-dl btn-download"`,
 		`id="btn-batch-switch"`,
@@ -352,6 +363,9 @@ func TestManualCollectionLocalSongRendersLocalActionOrder(t *testing.T) {
 	}
 
 	body := rec.Body.String()
+	if !strings.Contains(body, `class="right-toolbar"`) {
+		t.Fatalf("song detail should retain the global right toolbar: %s", body)
+	}
 	cardStart := strings.Index(body, `data-id="`+localID+`"`)
 	if cardStart < 0 {
 		t.Fatalf("rendered body missing local song card: %s", body)
@@ -902,11 +916,13 @@ func TestAutoCacheClientWaitsForConfirmedLocalMatch(t *testing.T) {
 	}
 	js := string(content)
 	for _, want := range []string{
-		"autoCacheOnPlay: true",
+		"autoCacheOnPlay: false",
 		"function isAutoCacheOnPlayEnabled()",
+		"return webSettings.autoCacheOnPlay === true;",
 		"if (!isAutoCacheOnPlayEnabled()) return;",
-		"if (!isAutoCacheOnPlayEnabled() || !key || localMusicMatchCache[audio.custom_id])",
-		"'X-Requested-With': 'XMLHttpRequest'",
+		"!isAutoCacheOnPlayEnabled() ||",
+		"localMusicMatchCache[audio.custom_id]",
+		`"X-Requested-With": "XMLHttpRequest"`,
 		"scheduleAutoCacheMatch(audio, key)",
 		"custom_id: playbackSong.id",
 		"original_id: ds.id",
@@ -918,6 +934,67 @@ func TestAutoCacheClientWaitsForConfirmedLocalMatch(t *testing.T) {
 	}
 	if strings.Contains(js, "localMusicMatchCache[audio.custom_id] =") {
 		t.Fatal("auto-cache must not mark an online ID as a local file before matching")
+	}
+}
+
+func TestLocalMusicDuplicateEndpointPaginatesGroups(t *testing.T) {
+	initCollectionDBForTest(t)
+
+	downloadDir := t.TempDir()
+	withLocalMusicDownloadDir(t, downloadDir)
+	for _, group := range []struct {
+		name   string
+		artist string
+		prefix string
+	}{
+		{name: "A Song", artist: "Artist", prefix: "a"},
+		{name: "B Song", artist: "Artist", prefix: "b"},
+	} {
+		for index := 1; index <= 2; index++ {
+			relPath := fmt.Sprintf("%s-%d.mp3", group.prefix, index)
+			path := filepath.Join(downloadDir, relPath)
+			if err := os.WriteFile(path, []byte("audio"), 0644); err != nil {
+				t.Fatalf("write %s: %v", relPath, err)
+			}
+			row := LocalMusicIndex{
+				ID:      encodeLocalMusicID(relPath),
+				RelPath: relPath,
+				Name:    group.name,
+				Artist:  group.artist,
+				Size:    int64(index),
+				Ext:     ".mp3",
+				ModTime: time.Now(),
+			}
+			if err := db.Create(&row).Error; err != nil {
+				t.Fatalf("create %s: %v", relPath, err)
+			}
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, RoutePrefix+"/local_music/duplicates?page=2&page_size=1", nil)
+	rec := httptest.NewRecorder()
+	newLocalMusicTestRouter().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /local_music/duplicates status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	var response struct {
+		Groups []struct {
+			Name string `json:"name"`
+		} `json:"groups"`
+		Page       int   `json:"page"`
+		PageSize   int   `json:"page_size"`
+		Total      int64 `json:"total"`
+		TotalPages int   `json:"total_pages"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode duplicate response: %v", err)
+	}
+	if response.Page != 2 || response.PageSize != 1 || response.Total != 2 || response.TotalPages != 2 {
+		t.Fatalf("pagination = %+v, want page=2 page_size=1 total=2 total_pages=2", response)
+	}
+	if len(response.Groups) != 1 || response.Groups[0].Name != "B Song" {
+		t.Fatalf("page 2 groups = %+v, want B Song", response.Groups)
 	}
 }
 
@@ -1142,7 +1219,7 @@ func TestAppJSInitializesCurrentPlayingIDBeforeBootstrap(t *testing.T) {
 	}
 	js := string(content)
 	stateIndex := strings.Index(js, "let currentPlayingId = null;")
-	bootstrapIndex := strings.Index(js, "document.addEventListener('DOMContentLoaded'")
+	bootstrapIndex := strings.Index(js, `document.addEventListener("DOMContentLoaded"`)
 	if stateIndex < 0 || bootstrapIndex < 0 {
 		t.Fatalf("app.js missing playback state or DOM bootstrap")
 	}
@@ -1203,12 +1280,12 @@ func TestLocalMusicClientQueuesPageChangesAndRefreshesAfterDuplicateDeletion(t *
 	for _, want := range []string{
 		"let queuedLocalMusicPageLoad = null;",
 		"async function fetchLocalMusicPagePayload(params)",
-		"cache: 'no-store'",
+		`cache: "no-store"`,
 		"persistWebSettingsCache();",
 		"await refreshLocalMusicPageAfterMutation();",
-		"await checkDuplicateSongs();",
-		"const btn = document.createElement('button');",
-		"btn.className = 'playmode-toggle-btn';",
+		"await checkDuplicateSongs(activeDuplicatePage);",
+		`const btn = document.createElement("button");`,
+		`btn.className = "playmode-toggle-btn";`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("app.js missing %q", want)
@@ -1216,6 +1293,20 @@ func TestLocalMusicClientQueuesPageChangesAndRefreshesAfterDuplicateDeletion(t *
 	}
 	if strings.Contains(js, "async function reindexLocalMusic()") {
 		t.Fatal("manual reindex control should not remain in the client")
+	}
+}
+
+func TestFloatingPaginationUsesLocalMusicPagePaginationBar(t *testing.T) {
+	content, err := templateFS.ReadFile("templates/static/js/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	js := string(content)
+	if strings.Count(js, `getElementById("localMusicPagePagination")`) < 4 {
+		t.Fatal("floating pagination should read the same local music pagination bar that the page renders")
+	}
+	if strings.Contains(js, `getElementById("local-music-pagination")`) {
+		t.Fatal("floating pagination should not reference the obsolete local music pagination ID")
 	}
 }
 

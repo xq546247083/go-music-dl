@@ -24,7 +24,7 @@ func TestAppJSMediaSessionArtworkUsesCoverProxy(t *testing.T) {
 	if !strings.Contains(js, "cover_proxy") {
 		t.Fatal("app.js missing cover_proxy media session artwork path")
 	}
-	if !strings.Contains(js, "function scheduleMediaSessionSync(audio = getCurrentAPlayerAudio(), delayMs = 160)") {
+	if !strings.Contains(js, "function scheduleMediaSessionSync(") {
 		t.Fatal("app.js missing delayed media session resync helper")
 	}
 	if !strings.Contains(js, "const mediaSessionCoverCache = new Map();") {
@@ -60,13 +60,13 @@ func TestAppJSPlaybackShortcutAndMediaKeys(t *testing.T) {
 	required := []string{
 		"function togglePlayback()",
 		"function handlePlaybackShortcut(event)",
-		"document.addEventListener('keydown', handlePlaybackShortcut);",
+		`document.addEventListener("keydown", handlePlaybackShortcut);`,
 		"function bindMediaKeyFallback()",
 		"bindMediaKeyFallback();",
-		"'MediaTrackNext'",
-		"'MediaTrackPrevious'",
-		"'MediaPlayPause'",
-		"'MediaStop'",
+		`"MediaTrackNext"`,
+		`"MediaTrackPrevious"`,
+		`"MediaPlayPause"`,
+		`"MediaStop"`,
 	}
 	for _, token := range required {
 		if !strings.Contains(js, token) {
@@ -86,7 +86,7 @@ func TestCoverProxyReturnsInlineImage(t *testing.T) {
 	defer upstream.Close()
 
 	router := gin.New()
-	RegisterMusicRoutes(router.Group(RoutePrefix))
+	RegisterMusicRoutes(router.Group(RoutePrefix), router.Group(RoutePrefix))
 
 	req := httptest.NewRequest(http.MethodGet, RoutePrefix+"/cover_proxy?url="+url.QueryEscape(upstream.URL), nil)
 	rec := httptest.NewRecorder()

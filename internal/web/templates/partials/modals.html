@@ -48,13 +48,18 @@
                         <option value="/sdcard/Download">Android 下载：/sdcard/Download</option>
                         <option value="__custom__">自定义目录...</option>
                     </select>
-                    <input type="text" id="setting-download-dir" aria-describedby="setting-download-dir-hint" placeholder="例如: data/downloads、D:/Music/Downloads 或 /sdcard/Music">
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <input type="text" id="setting-download-dir" aria-describedby="setting-download-dir-hint" placeholder="例如: data/downloads、D:/Music/Downloads 或 /sdcard/Music" style="flex:1;">
+                        <button type="button" class="btn-pill" onclick="pickDownloadFolder()" title="选择文件夹" style="white-space:nowrap;font-size:12px;padding:4px 10px;">
+                            <i class="fa-solid fa-folder-open"></i>
+                        </button>
+                    </div>
                 </div>
                 <p id="setting-download-dir-hint" class="setting-hint" style="margin-left: 0;">选择预设会自动填入路径，也可以手填相对目录或绝对目录。Android 建议使用 <code>/sdcard/Music</code>，便于系统音乐应用识别。</p>
             </div>
             <div class="cookie-item">
                 <label for="setting-download-filename-template">音乐文件名模板</label>
-                <input type="text" id="setting-download-filename-template" placeholder="{name} - {artist}">
+                <input type="text" id="setting-download-filename-template" placeholder="{artist} - {name}">
                 <p class="setting-hint" style="margin-left: 0;">支持 <code>{name}</code>、<code>{artist}</code>、<code>{album}</code>、<code>{source}</code>、<code>{id}</code>、<code>{ext}</code>。未写 <code>{ext}</code> 时会自动追加扩展名；可用 <code>/</code> 或 <code>\</code> 创建相对子目录，例如 <code>{artist}/{album}/{name} - {artist}.{ext}</code>。</p>
             </div>
             <div class="cookie-item setting-item">
@@ -63,7 +68,7 @@
                     <span class="setting-switch" aria-hidden="true"></span>
                     <span class="setting-toggle-text">播放时自动缓存本地音乐</span>
                 </label>
-                <p class="setting-hint">在线歌曲开始播放后会后台保存到本地下载目录；下次播放匹配成功时优先使用本地文件，默认开启。</p>
+                <p class="setting-hint">开启后，在线歌曲开始播放时会后台保存到本地下载目录；默认关闭，避免持续占用储存空间。</p>
             </div>
             <div class="cookie-item setting-item">
                 <label class="setting-toggle" for="setting-floating-lyrics">
@@ -75,8 +80,15 @@
             </div>
             <div class="cookie-item">
                 <label for="setting-web-page-size">Web 每页条数</label>
-                <input type="number" id="setting-web-page-size" min="1" max="200" step="1" placeholder="默认 30">
-                <p class="setting-hint" style="margin-left: 0;">用于网页分页显示，默认 30。</p>
+                <select id="setting-web-page-size" aria-label="Web 每页条数">
+                    <option value="30">30 条/页</option>
+                    <option value="100">100 条/页</option>
+                    <option value="200" selected>200 条/页（默认）</option>
+                    <option value="300">300 条/页</option>
+                    <option value="400">400 条/页</option>
+                    <option value="500">500 条/页</option>
+                </select>
+                <p class="setting-hint" style="margin-left: 0;">搜索结果列表每页显示的歌曲数量，默认 200。</p>
             </div>
             <div class="cookie-item">
                 <label for="setting-cli-page-size">CLI 每页条数</label>
@@ -96,6 +108,14 @@
                 <span class="setting-link-body">
                     <span class="setting-link-title">关于 go-music-dl</span>
                     <span class="setting-link-desc">查看当前版本并检查 GitHub 是否有新版</span>
+                </span>
+                <i class="fa-solid fa-chevron-right setting-link-chevron" aria-hidden="true"></i>
+            </button>
+            <button type="button" class="cookie-item setting-item setting-link-row" onclick="openDownloadRecordsModal()">
+                <span class="setting-link-icon"><i class="fa-solid fa-clock-rotate-left"></i></span>
+                <span class="setting-link-body">
+                    <span class="setting-link-title">下载记录</span>
+                    <span class="setting-link-desc">查看下载任务历史（成功 / 跳过 / 失败）</span>
                 </span>
                 <i class="fa-solid fa-chevron-right setting-link-chevron" aria-hidden="true"></i>
             </button>
@@ -227,30 +247,63 @@
         </div>
     </div>
 </div>
-<div id="localMusicModal" class="modal-overlay" style="z-index: 1006;">
-    <div class="modal local-music-modal">
+<!-- 下载记录弹窗 -->
+<div id="downloadRecordsModal" class="modal-overlay utility-modal-overlay">
+    <div class="modal utility-modal download-records-modal">
         <div class="modal-header">
             <div>
-                <h3>添加本地音乐</h3>
-                <p class="local-music-subtitle">自动读取本地下载目录，可直接上传音频文件。</p>
+                <h3><i class="fa-solid fa-clock-rotate-left"></i> 下载记录</h3>
+                <p class="download-records-subtitle">最近的下载、跳过和失败记录</p>
             </div>
-            <div class="modal-close" onclick="closeLocalMusicModal()"><i class="fa-solid fa-xmark"></i></div>
+            <div class="modal-close" onclick="closeDownloadRecordsModal()"><i class="fa-solid fa-xmark"></i></div>
         </div>
         <div class="modal-body">
-            <div class="local-music-toolbar">
-                <div class="local-music-dir" id="localMusicDir">下载目录：-</div>
-                <div class="local-music-target" id="localMusicTargetWrap" style="display:none;">
-                    <label for="localMusicCollectionSelect">添加到</label>
-                    <select id="localMusicCollectionSelect" onchange="selectLocalMusicCollection(this.value)"></select>
+            <div class="utility-modal-toolbar download-records-toolbar">
+                <span id="download-records-count" class="utility-modal-count download-records-count">加载中...</span>
+                <div class="utility-modal-actions download-records-actions">
+                    <button type="button" class="btn-pill" onclick="openLocalMusicPage()">
+                        <i class="fa-solid fa-folder-plus"></i> 本地音乐
+                    </button>
+                    <button type="button" class="btn-pill btn-pill-danger" onclick="clearDownloadRecords()">
+                        <i class="fa-solid fa-trash-can"></i> 清空记录
+                    </button>
                 </div>
-                <label class="btn-pill btn-pill-primary local-upload-btn" for="localMusicUploadInput">
-                    <i class="fa-solid fa-upload"></i> 上传音乐
-                </label>
-                <input id="localMusicUploadInput" type="file" accept=".mp3,.flac,.m4a,.ogg,.wav,.wma,.aac,audio/*" onchange="uploadLocalMusicFile(this)" hidden>
             </div>
-            <div id="localMusicHint" class="local-music-hint">正在加载本地音乐...</div>
-            <div id="localMusicList" class="local-music-list"></div>
+            <div id="download-records-list" class="utility-modal-list download-records-list"></div>
+            <nav id="download-records-pagination" class="utility-modal-pagination" aria-label="下载记录分页"></nav>
+            <div class="utility-modal-footer download-records-footer">
+                <button type="button" class="btn-pill" onclick="closeDownloadRecordsModal()">关闭</button>
+            </div>
         </div>
     </div>
 </div>
+
+<!-- 播放历史弹窗 -->
+<div id="playbackHistoryModal" class="modal-overlay utility-modal-overlay">
+    <div class="modal utility-modal playback-history-modal">
+        <div class="modal-header">
+            <div>
+                <h3><i class="fa-solid fa-clock"></i> 播放历史</h3>
+                <p class="utility-modal-subtitle">此设备最近播放过的歌曲</p>
+            </div>
+            <div class="modal-close" onclick="closePlaybackHistoryModal()"><i class="fa-solid fa-xmark"></i></div>
+        </div>
+        <div class="modal-body">
+            <div class="utility-modal-toolbar">
+                <span id="playback-history-count" class="utility-modal-count">暂无播放记录</span>
+                <div class="utility-modal-actions">
+                    <button type="button" class="btn-pill btn-pill-danger" onclick="clearPlaybackHistory()">
+                        <i class="fa-solid fa-trash-can"></i> 清空历史
+                    </button>
+                </div>
+            </div>
+            <div id="playback-history-list" class="utility-modal-list playback-history-list"></div>
+            <nav id="playback-history-pagination" class="utility-modal-pagination" aria-label="播放历史分页"></nav>
+            <div class="utility-modal-footer">
+                <button type="button" class="btn-pill" onclick="closePlaybackHistoryModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {{end}}
