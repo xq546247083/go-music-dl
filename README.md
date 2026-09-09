@@ -170,6 +170,18 @@ ffmpeg -version
 * macOS: `brew install ffmpeg`
 * Ubuntu/Debian: `sudo apt install ffmpeg`
 
+## WebDAV 同步
+
+Web 设置里新增了 **下载时同步到 WebDAV** 开关。开启并填写 WebDAV 地址、用户名、密码和远端目录后，点击“保存到本地目录”或“浏览器下载”时，会把音乐文件同时上传到 WebDAV。密码保存在服务端 `data/settings.db`，Web 设置接口不会回显密码。
+
+仓库提供本地 Docker WebDAV 测试配置，使用 `127.0.0.1`，不需要域名：
+
+```bash
+docker compose -f docker-compose.webdav.yml up -d
+```
+
+测试地址为 `http://127.0.0.1:18081/dav`，用户名 `test`，密码 `123456`。上传目录会映射到本仓库的 `data/webdav`。
+
 ### Docker / Release 包里的 FFmpeg 与 ffprobe
 
 `ffprobe` 属于 FFmpeg 工具集，主要用于本地音乐的时长、码率和标签探测；`ffmpeg` 主要用于非 MP3 音频的封面/歌词元数据写入。缺少它们不会影响程序启动，也不会阻塞本地音乐列表加载，只会降级相关增强能力。
@@ -483,7 +495,7 @@ TUI 在输入界面按 `w` 直接拉取推荐歌单，然后回车进详情。
 | 酷我音乐    | `kuwo`     | ✅   | ✅   | ✅   | ✅       | ✅       | ✅       | ✅       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           |                                        |
 | 咪咕音乐    | `migu`     | ✅   | ✅   | ✅   | ✅       | ✅       | ❌       | ✅       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           | 歌单歌曲使用 MIGUM3 接口               |
 | 千千音乐    | `qianqian` | ✅   | ✅   | ✅   | ✅       | ⚠️     | ❌       | ✅       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           | 歌单搜索可能返回空，已知 ID/链接可解析 |
-| 汽水音乐    | `soda`     | ❌   | ✅   | ✅   | ✅       | ✅       | ❌       | ❌       | ✅       | ⚠️ 未调通 | ✅       | ✅           | ✅       | ✅       | ✅           | 单曲搜索未调通；音频解密，支持短链和个人歌单；扫码登录暂未调通 |
+| 汽水音乐    | `soda`     | ✅   | ✅   | ✅   | ✅       | ✅       | ❌       | ❌       | ✅       | ⚠️ 未调通 | ✅       | ✅           | ✅       | ✅       | ✅           | 音频解密，支持短链和个人歌单；扫码登录暂未调通 |
 | 5sing       | `fivesing` | ✅   | ✅   | ✅   | ✅       | ✅       | ❌       | ❌       | ❌       | ❌          | ✅       | ✅           | ❌       | ❌       | ❌           |                                        |
 | Jamendo     | `jamendo`  | ✅   | ✅   | ✅   | ✅       | ⚠️     | ❌       | ❌       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           | 歌单搜索可能返回空，公开歌单链接可解析 |
 | JOOX        | `joox`     | ✅   | ✅   | ✅   | ✅       | ✅       | ❌       | ✅       | ❌       | ❌          | ✅       | ✅           | ✅       | ✅       | ✅           | 歌单支持 OpenJOOX 接口和网页数据兜底   |
@@ -668,6 +680,7 @@ go-music-dl/
 * **无损音乐**: [Suxiaoqinx/Netease_url](https://github.com/Suxiaoqinx/Netease_url) - 网易云音乐 FLAC 无损音乐解析
 * **QQ 音乐**: [Suxiaoqinx/qqmusic_flac](https://github.com/Suxiaoqinx/qqmusic_flac) - QQ 音乐 FLAC 解析
 * **逐字歌词展示参考**: [chenmozhijin/LDDC](https://github.com/chenmozhijin/LDDC) - 原文 / 译文 / 罗马音逐字歌词的组织与展示思路参考
+* **汽水音乐接口参考**: [Zencok/baka-plugins](https://github.com/Zencok/baka-plugins) - 汽水音乐搜索、取流和扫码接口参考
 
 ## 免责声明
 
